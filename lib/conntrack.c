@@ -588,10 +588,8 @@ write_ct_md(struct dp_packet *pkt, uint16_t zone, const struct conn *conn,
     pkt->md.ct_zone = zone;
 
     if (conn) {
-        ovs_mutex_lock(&conn->lock);
-        pkt->md.ct_mark = conn->mark;
+        atomic_read_relaxed(&conn->mark, &pkt->md.ct_mark);
         pkt->md.ct_label = conn->label;
-        ovs_mutex_unlock(&conn->lock);
     } else {
         pkt->md.ct_mark = 0;
         pkt->md.ct_label = OVS_U128_ZERO;
@@ -1271,8 +1269,8 @@ process_one_fast(uint16_t zone, const uint32_t *setmark,
     }
 
     pkt->md.ct_zone = zone;
+    atomic_read_relaxed(&conn->mark, &pkt->md.ct_mark);
     ovs_mutex_lock(&conn->lock);
-    pkt->md.ct_mark = conn->mark;
     pkt->md.ct_label = conn->label;
     ovs_mutex_unlock(&conn->lock);
 
@@ -1353,9 +1351,11 @@ process_one(struct conntrack *ct, struct dp_packet *pkt,
             if (!conn) {
                 pkt->md.ct_state |= CS_INVALID;
                 write_ct_md(pkt, zone, NULL, NULL, NULL);
-                char *log_msg = xasprintf("Missing parent conn %p", rev_conn);
-                ct_print_conn_info(rev_conn, log_msg, VLL_INFO, true, true);
-                free(log_msg);
+                if (VLOG_IS_INFO_ENABLED()) {
+                    char *log_msg = xasprintf("Missing parent conn %p", rev_conn);
+                    ct_print_conn_info(rev_conn, log_msg, VLL_INFO, true, true);
+                    free(log_msg);
+                }
                 return;
             }
         }
@@ -1485,14 +1485,12 @@ conntrack_clear(struct dp_packet *packet)
 static void
 set_mark(struct dp_packet *pkt, struct conn *conn, uint32_t val, uint32_t mask)
 {
-    ovs_mutex_lock(&conn->lock);
     if (conn->alg_related) {
-        pkt->md.ct_mark = conn->mark;
+        atomic_read_relaxed(&conn->mark, &pkt->md.ct_mark);
     } else {
         pkt->md.ct_mark = val | (pkt->md.ct_mark & ~(mask));
-        conn->mark = pkt->md.ct_mark;
+        atomic_store_relaxed(&conn->mark, pkt->md.ct_mark);
     }
-    ovs_mutex_unlock(&conn->lock);
 }
 
 static void
@@ -2629,8 +2627,8 @@ conn_to_ct_dpif_entry(const struct conn *conn, struct ct_dpif_entry *entry,
 
     entry->zone = conn->key.zone;
 
+    atomic_read_relaxed(&conn->mark, &entry->mark);
     ovs_mutex_lock(&conn->lock);
-    entry->mark = conn->mark;
     memcpy(&entry->labels, &conn->label, sizeof entry->labels);
 
     long long expiration = conn->expiration - now;
