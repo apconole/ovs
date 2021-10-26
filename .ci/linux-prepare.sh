@@ -22,7 +22,9 @@ cd ..
 
 pip3 install --disable-pip-version-check --user \
     flake8 hacking sphinx pyOpenSSL wheel setuptools
-pip3 install --user --upgrade docutils
+
+# assume that the installed docutils version is correct
+pip3 install --user docutils
 pip3 install --user  'meson==0.47.1'
 
 if [ "$M32" ]; then
