@@ -1135,7 +1135,8 @@ ipf_send_expired_frags(struct ipf *ipf, struct dp_packet_batch *pb,
 /* Adds a reassmebled packet to a packet batch to be processed by the caller.
  */
 static void
-ipf_execute_reass_pkts(struct ipf *ipf, struct dp_packet_batch *pb)
+ipf_execute_reass_pkts(struct ipf *ipf, struct dp_packet_batch *pb,
+                       struct ipf_ctx *ctx)
 {
     if (ovs_list_is_empty(&ipf->reassembled_pkt_list)) {
         return;
@@ -1145,6 +1146,10 @@ ipf_execute_reass_pkts(struct ipf *ipf, struct dp_packet_batch *pb)
     struct reassembled_pkt *rp, *next;
 
     LIST_FOR_EACH_SAFE (rp, next, rp_list_node, &ipf->reassembled_pkt_list) {
+        if (ctx && !ipf_ctx_eq(rp->list, ctx, rp->pkt)) {
+            continue;
+        }
+
         if (!rp->list->reass_execute_ctx &&
             ipf_dp_packet_batch_add(pb, rp->pkt, false)) {
             rp->list->reass_execute_ctx = rp->pkt;
@@ -1246,6 +1251,7 @@ ipf_post_execute_reass_pkts(struct ipf *ipf,
  * be added to the batch to be sent through conntrack. */
 void
 ipf_preprocess_conntrack(struct ipf *ipf, struct dp_packet_batch *pb,
+                         struct ipf_ctx *ipf_ctx,
                          long long now, ovs_be16 dl_type,
                          uint16_t zone, uint32_t hash_basis)
 {
@@ -1254,7 +1260,7 @@ ipf_preprocess_conntrack(struct ipf *ipf, struct dp_packet_batch *pb,
     }
 
     if (ipf_get_enabled(ipf) || atomic_count_get(&ipf->nfrag)) {
-        ipf_execute_reass_pkts(ipf, pb);
+        ipf_execute_reass_pkts(ipf, pb, ipf_ctx);
     }
 }
 

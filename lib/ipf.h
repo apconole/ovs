@@ -49,6 +49,7 @@ struct ipf_ctx {
 struct ipf *ipf_init(void);
 void ipf_destroy(struct ipf *ipf);
 void ipf_preprocess_conntrack(struct ipf *ipf, struct dp_packet_batch *pb,
+                              struct ipf_ctx *ctx,
                               long long now, ovs_be16 dl_type, uint16_t zone,
                               uint32_t hash_basis);
 
