@@ -5011,6 +5011,7 @@ packet_execute_prepare(struct ofproto *ofproto_,
     ofproto_dpif_set_packet_odp_port(ofproto, opo->flow->in_port.ofp_port,
                                      opo->packet);
 
+    opo->flow->in_port = opo->packet->md.in_port;
     ofproto_dpif_packet_out_delete(aux);
     opo->aux = execute;
 }
