@@ -8500,6 +8500,7 @@ dp_netdev_recirculate(struct dp_netdev_pmd_thread *pmd,
 struct dp_netdev_execute_aux {
     struct dp_netdev_pmd_thread *pmd;
     const struct flow *flow;
+    const struct nlattr *redo_actions;
 };
 
 static void
@@ -9029,10 +9030,23 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
             VLOG_WARN_RL(&rl, "NAT specified without commit.");
         }
 
-        conntrack_execute(dp->conntrack, packets_, aux->flow->dl_type, force,
-                          commit, zone, setmark, setlabel, aux->flow->tp_src,
-                          aux->flow->tp_dst, helper, nat_action_info_ref,
-                          pmd->ctx.now / 1000, tp_id);
+        bool more_pkts;
+        struct ipf_ctx ipf_ctx = { aux->flow->recirc_id,
+                                   aux->flow->in_port,
+                                   zone };
+        more_pkts = conntrack_execute(dp->conntrack, packets_,
+                                      aux->flow->dl_type,
+                                      force, commit, zone,
+                                      setmark, setlabel,
+                                      aux->flow->tp_src,
+                                      aux->flow->tp_dst,
+                                      helper, nat_action_info_ref,
+                                      pmd->ctx.now / 1000, tp_id, &ipf_ctx);
+        if (more_pkts) {
+            aux->redo_actions = a;
+        } else {
+            aux->redo_actions = NULL;
+        }
         break;
     }
 
@@ -9067,16 +9081,44 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
     dp_packet_delete_batch(packets_, should_steal);
 }
 
+static size_t
+dp_netdev_find_actions_left(const struct nlattr *actions,
+                            size_t actions_len,
+                            const struct nlattr *target)
+{
+    const struct nlattr *a;
+    size_t left;
+    NL_ATTR_FOR_EACH_UNSAFE (a, left, actions, actions_len) {
+        if (a == target) {
+            break;
+        }
+    }
+    return left;
+}
+
 static void
 dp_netdev_execute_actions(struct dp_netdev_pmd_thread *pmd,
                           struct dp_packet_batch *packets,
                           bool should_steal, const struct flow *flow,
                           const struct nlattr *actions, size_t actions_len)
 {
-    struct dp_netdev_execute_aux aux = { pmd, flow };
+    int max_reexec = 2;
+    struct dp_netdev_execute_aux aux = { pmd, flow, NULL };
 
     odp_execute_actions(&aux, packets, should_steal, actions,
                         actions_len, dp_execute_cb);
+
+    while (OVS_UNLIKELY(aux.redo_actions && max_reexec --)) {
+        struct dp_packet_batch batch;
+        dp_packet_batch_init(&batch);
+        size_t redo_actions_len = \
+                                  dp_netdev_find_actions_left(actions,
+                                          actions_len,
+                                          aux.redo_actions);
+
+        odp_execute_actions(&aux, &batch, should_steal,
+                aux.redo_actions, redo_actions_len, dp_execute_cb);
+    }
 }
 
 struct dp_netdev_ct_dump {

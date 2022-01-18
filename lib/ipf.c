@@ -1046,30 +1046,51 @@ ipf_send_frags_in_list(struct ipf *ipf, struct ipf_list *ipf_list,
     OVS_NOT_REACHED();
 }
 
+static bool
+ipf_ctx_eq(struct ipf_list *ipf_list, struct ipf_ctx *ctx,
+           struct dp_packet *pkt)
+{
+    if (ipf_list->key.recirc_id != ctx->recirc_id ||
+            pkt->md.in_port.odp_port != ctx->in_port.odp_port ||
+            ipf_list->key.zone != ctx->zone) {
+        return false;
+    }
+    return true;
+}
+
 /* Adds fragments associated with a completed fragment list to a packet batch
  * to be processed by the calling application, typically conntrack. Also
  * cleans up the list context when it is empty.*/
-static void
+static bool
 ipf_send_completed_frags(struct ipf *ipf, struct dp_packet_batch *pb,
-                         long long now, bool v6)
+                         struct ipf_ctx *ctx, long long now, bool v6)
 {
     if (ovs_list_is_empty(&ipf->frag_complete_list)) {
-        return;
+        return false;
     }
 
+    bool more_pkts = false;
     ovs_mutex_lock(&ipf->ipf_lock);
     struct ipf_list *ipf_list, *next;
 
     LIST_FOR_EACH_SAFE (ipf_list, next, list_node, &ipf->frag_complete_list) {
+
+        if (ctx && !ipf_ctx_eq(ipf_list, ctx, \
+                    ipf_list->frag_list[ipf_list->last_sent_idx + 1].pkt)) {
+            continue;
+        }
+
         if (ipf_send_frags_in_list(ipf, ipf_list, pb, IPF_FRAG_COMPLETED_LIST,
                                    v6, now)) {
             ipf_completed_list_clean(&ipf->frag_lists, ipf_list);
         } else {
+            more_pkts = true;
             break;
         }
     }
 
     ovs_mutex_unlock(&ipf->ipf_lock);
+    return more_pkts;
 }
 
 /* Conservatively adds fragments associated with a expired fragment list to
@@ -1225,8 +1246,8 @@ ipf_post_execute_reass_pkts(struct ipf *ipf,
  * be added to the batch to be sent through conntrack. */
 void
 ipf_preprocess_conntrack(struct ipf *ipf, struct dp_packet_batch *pb,
-                         long long now, ovs_be16 dl_type, uint16_t zone,
-                         uint32_t hash_basis)
+                         long long now, ovs_be16 dl_type,
+                         uint16_t zone, uint32_t hash_basis)
 {
     if (ipf_get_enabled(ipf)) {
         ipf_extract_frags_from_batch(ipf, pb, dl_type, zone, now, hash_basis);
@@ -1241,16 +1262,18 @@ ipf_preprocess_conntrack(struct ipf *ipf, struct dp_packet_batch *pb,
  * through conntrack and adds these fragments to any batches seen.  Expired
  * fragments are marked as invalid and also added to the batches seen
  * with low priority.  Reassembled packets are freed. */
-void
+bool
 ipf_postprocess_conntrack(struct ipf *ipf, struct dp_packet_batch *pb,
-                          long long now, ovs_be16 dl_type)
+                          struct ipf_ctx *ctx, long long now, ovs_be16 dl_type)
 {
+    bool more_pkts = false;
     if (ipf_get_enabled(ipf) || atomic_count_get(&ipf->nfrag)) {
         bool v6 = dl_type == htons(ETH_TYPE_IPV6);
         ipf_post_execute_reass_pkts(ipf, pb, v6);
-        ipf_send_completed_frags(ipf, pb, now, v6);
+        more_pkts = ipf_send_completed_frags(ipf, pb, ctx, now, v6);
         ipf_send_expired_frags(ipf, pb, now, v6);
     }
+    return more_pkts;
 }
 
 static void *

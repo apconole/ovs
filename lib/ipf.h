@@ -40,14 +40,21 @@ struct ipf_status {
    unsigned int nfrag_max;
 };
 
+struct ipf_ctx {
+    uint32_t recirc_id;
+    union flow_in_port in_port; /* Input port. */
+    uint16_t zone;
+};
+
 struct ipf *ipf_init(void);
 void ipf_destroy(struct ipf *ipf);
 void ipf_preprocess_conntrack(struct ipf *ipf, struct dp_packet_batch *pb,
                               long long now, ovs_be16 dl_type, uint16_t zone,
                               uint32_t hash_basis);
 
-void ipf_postprocess_conntrack(struct ipf *ipf, struct dp_packet_batch *pb,
-                               long long now, ovs_be16 dl_type);
+bool ipf_postprocess_conntrack(struct ipf *ipf, struct dp_packet_batch *pb,
+                               struct ipf_ctx *ctx, long long now,
+                               ovs_be16 dl_type);
 
 int ipf_set_enabled(struct ipf *ipf, bool v6, bool enable);
 int ipf_set_min_frag(struct ipf *ipf, bool v6, uint32_t value);
