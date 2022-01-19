@@ -27,4 +27,6 @@ void conn_init_expiration(struct conntrack *ct, struct conn *conn,
                           enum ct_timeout tm, long long now);
 void conn_update_expiration(struct conntrack *ct, struct conn *conn,
                             enum ct_timeout tm, long long now);
+void dpif_netdev_format_timeout_policy(const struct ct_dpif_timeout_policy *tp,
+                                       struct ds *ds);
 #endif

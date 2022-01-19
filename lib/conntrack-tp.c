@@ -230,6 +230,17 @@ tm_to_ct_dpif_tp(enum ct_timeout tm)
     return CT_DPIF_TP_ATTR_MAX;
 }
 
+void
+dpif_netdev_format_timeout_policy(const struct ct_dpif_timeout_policy *tp,
+                                  struct ds *ds)
+{
+    for (unsigned i = 0; i < N_CT_TM; i++) {
+        ds_put_format(ds, "\n\t%s = %"PRIu32, ct_timeout_str[i],
+                      tp->attrs[tm_to_ct_dpif_tp(i)]);
+    }
+}
+
+
 static void
 conn_update_expiration__(struct conntrack *ct, struct conn *conn,
                          enum ct_timeout tm, long long now,

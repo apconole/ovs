@@ -180,6 +180,25 @@ ct_dpif_get_tcp_seq_chk(struct dpif *dpif, bool *enabled)
 }
 
 int
+ct_dpif_set_default_timeout_policy(struct dpif *dpif,
+                                   struct ct_dpif_timeout_policy *tp)
+{
+    return (dpif->dpif_class->ct_set_default_timeout_policy
+            ? dpif->dpif_class->ct_set_default_timeout_policy(dpif, tp)
+            : EOPNOTSUPP);
+}
+
+int
+ct_dpif_get_default_timeout_policy(struct dpif *dpif,
+                                   struct ct_dpif_timeout_policy *tp,
+                                   struct ds *ds)
+{
+    return (dpif->dpif_class->ct_get_default_timeout_policy
+            ? dpif->dpif_class->ct_get_default_timeout_policy(dpif, tp, ds)
+            : EOPNOTSUPP);
+}
+
+int
 ct_dpif_set_limits(struct dpif *dpif, const uint32_t *default_limit,
                    const struct ovs_list *zone_limits)
 {
@@ -710,6 +729,43 @@ ct_dpif_free_zone_limits(struct ovs_list *zone_limits)
     }
 }
 
+
+/* Parses a specification of a timeout policy from 's' into '*tp'.
+ * Returns true on success.  Otherwise, returns false and puts the
+ * error message in 'ds'. */
+bool
+ct_dpif_parse_timeout_policy_tuple(const char *s, struct ds *ds,
+                                   struct ct_dpif_timeout_policy *tp)
+{
+    char *pos, *key, *value, *copy, *err;
+
+    pos = copy = xstrdup(s);
+    while (ofputil_parse_key_value(&pos, &key, &value)) {
+        uint32_t tmp;
+
+        if (!*value) {
+            ds_put_format(ds, "field %s missing value", key);
+            goto error;
+        }
+
+        err = str_to_u32(value, &tmp);
+        if (err) {
+          free(err);
+          goto error_with_msg;
+        }
+
+        ct_dpif_set_timeout_policy_attr_by_name(tp, key, tmp);
+    }
+    free(copy);
+
+    return true;
+
+error_with_msg:
+    ds_put_format(ds, "failed to parse field %s", key);
+error:
+    free(copy);
+    return false;
+}
 /* Parses a specification of a conntrack zone limit from 's' into '*pzone'
  * and '*plimit'.  Returns true on success.  Otherwise, returns false and
  * and puts the error message in 'ds'. */

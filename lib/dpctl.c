@@ -2108,6 +2108,71 @@ dpctl_ct_get_tcp_seq_chk(int argc, const char *argv[],
 }
 
 static int
+dpctl_ct_set_default_timeout_policy(int argc, const char *argv[],
+                                    struct dpctl_params *dpctl_p)
+{
+    int i =  dp_arg_exists(argc, argv) ? 2 : 1;
+    struct ds ds = DS_EMPTY_INITIALIZER;
+    struct ct_dpif_timeout_policy tp;
+    struct dpif *dpif;
+
+    int error = opt_dpif_open(argc, argv, dpctl_p, 3, &dpif);
+    if (error) {
+        return error;
+    }
+
+    memset(&tp, 0, sizeof tp);
+
+    /* Parse timeout policy tuples */
+    if (!ct_dpif_parse_timeout_policy_tuple(argv[i], &ds, &tp)) {
+        error = EINVAL;
+        goto error;
+    }
+
+    error = ct_dpif_set_default_timeout_policy(dpif, &tp);
+    if (!error) {
+        dpif_close(dpif);
+        return 0;
+    } else {
+        ds_put_cstr(&ds, "failed to set timeout policy");
+    }
+
+error:
+    dpctl_error(dpctl_p, error, "%s", ds_cstr(&ds));
+    ds_destroy(&ds);
+    dpif_close(dpif);
+    return error;
+}
+
+static int
+dpctl_ct_get_default_timeout_policy(int argc, const char *argv[],
+                                    struct dpctl_params *dpctl_p)
+{
+    struct ds ds = DS_EMPTY_INITIALIZER;
+    struct ct_dpif_timeout_policy tp;
+    struct dpif *dpif;
+
+    int error = opt_dpif_open(argc, argv, dpctl_p, INT_MAX, &dpif);
+    if (error) {
+        return error;
+    }
+
+    error = ct_dpif_get_default_timeout_policy(dpif, &tp, &ds);
+    if (!error) {
+        ds_put_format(&ds, "default timeout policy (s): ");
+        dpctl_print(dpctl_p, "%s\n", ds_cstr(&ds));
+    } else {
+        ds_put_format(&ds, "failed to get conntrack timeout policy %s",
+                      ovs_strerror(error));
+        dpctl_error(dpctl_p, error, "%s", ds_cstr(&ds));
+    }
+
+    ds_destroy(&ds);
+    dpif_close(dpif);
+    return error;
+}
+
+static int
 dpctl_ct_set_limits(int argc, const char *argv[],
                     struct dpctl_params *dpctl_p)
 {
@@ -2878,6 +2943,10 @@ static const struct dpctl_command all_commands[] = {
     { "ct-disable-tcp-seq-chk", "[dp]", 0, 1, dpctl_ct_disable_tcp_seq_chk,
        DP_RW },
     { "ct-get-tcp-seq-chk", "[dp]", 0, 1, dpctl_ct_get_tcp_seq_chk, DP_RO },
+    { "ct-set-default-tp", "[dp]", 1, 2,
+       dpctl_ct_set_default_timeout_policy, DP_RW },
+    { "ct-get-default-tp", "[dp]", 0, 1,
+       dpctl_ct_get_default_timeout_policy, DP_RO },
     { "ct-set-limits", "[dp] [default=L] [zone=N,limit=L]...", 1, INT_MAX,
         dpctl_ct_set_limits, DP_RO },
     { "ct-del-limits", "[dp] zone=N1[,N2]...", 1, 2, dpctl_ct_del_limits,

@@ -110,6 +110,13 @@ m4_define([CHECK_CONNTRACK_ZEROIP_SNAT])
 #
 m4_define([CHECK_CONNTRACK_TIMEOUT])
 
+# CHECK_CONNTRACK_DEFAULT_TIMEOUT()
+#
+# Perform requirements checks for running conntrack customized
+# default timeout tests.
+#
+m4_define([CHECK_CONNTRACK_DEFAULT_TIMEOUT])
+
 # CHECK_CT_DPIF_SET_GET_MAXCONNS()
 #
 # Perform requirements checks for running ovs-dpctl ct-set-maxconns or

@@ -572,6 +572,14 @@ struct dpif_class {
                                       uint16_t dl_type, uint8_t nw_proto,
                                       char **tp_name, bool *is_generic);
 
+    /* Sets default timeout policy '*tp' into the datapath. */
+    int (*ct_set_default_timeout_policy)(struct dpif *,
+                                         struct ct_dpif_timeout_policy *);
+    /* Gets the default timeout policy and stores it into '*tp'. */
+    int (*ct_get_default_timeout_policy)(struct dpif *,
+                                         struct ct_dpif_timeout_policy *,
+                                         struct ds *);
+
     /* Stores the conntrack features supported by 'dpif' into features.
      * The value is a bitmap of CONNTRACK_F_* bits. */
     int (*ct_get_features)(struct dpif *, enum ct_features *features);

@@ -4477,6 +4477,8 @@ const struct dpif_class dpif_netlink_class = {
     dpif_netlink_ct_timeout_policy_dump_next,
     dpif_netlink_ct_timeout_policy_dump_done,
     dpif_netlink_ct_get_timeout_policy_name,
+    NULL,                       /* ct_set_default_timeout_policy */
+    NULL,                       /* ct_get_default_timeout_policy */
     dpif_netlink_ct_get_features,
     NULL,                       /* ipf_set_enabled */
     NULL,                       /* ipf_set_min_frag */

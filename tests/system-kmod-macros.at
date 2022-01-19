@@ -121,6 +121,16 @@ m4_define([CHECK_CONNTRACK_TIMEOUT],
     on_exit 'modprobe -r nfnetlink_cttimeout'
 ])
 
+# CHECK_CONNTRACK_DEFAULT_TIMEOUT()
+#
+# Perform requirements checks for running ovs-dpctl ct-set-default-tp or
+# ovs-dpctl ct-get-default-tp. The kernel datapath does not support this
+# feature.
+m4_define([CHECK_CONNTRACK_DEFAULT_TIMEOUT],
+[
+    AT_SKIP_IF([:])
+])
+
 # CHECK_CT_DPIF_SET_GET_MAXCONNS()
 #
 # Perform requirements checks for running ovs-dpctl ct-set-maxconns or

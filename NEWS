@@ -51,6 +51,10 @@ v2.17.0 - xx xxx xxxx
    - Ingress policing on Linux now uses 'matchall' classifier instead of
      'basic', if available.
    - Add User Statically-Defined Tracing (USDT) probe framework support.
+   - ovs-appctl dpctl/:
+     * New commands 'ct-set-default-tp' and
+       'ct-set-default-tp' that allows to get or configure
+       netdev datapath ct default timeout policy.
 
 
 v2.16.0 - 16 Aug 2021
