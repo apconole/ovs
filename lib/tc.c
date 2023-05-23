@@ -82,6 +82,7 @@ struct flower_key_to_pedit {
     int flower_offset;
     int size;
     int boundary_shift;
+    bool include_icmp_flag;
 };
 
 struct tc_flow_stats {
@@ -95,97 +96,112 @@ static struct flower_key_to_pedit flower_pedit_map[] = {
         12,
         offsetof(struct tc_flower_key, ipv4.ipv4_src),
         MEMBER_SIZEOF(struct tc_flower_key, ipv4.ipv4_src),
-        0
+        0,
+        true
     }, {
         TCA_PEDIT_KEY_EX_HDR_TYPE_IP4,
         16,
         offsetof(struct tc_flower_key, ipv4.ipv4_dst),
         MEMBER_SIZEOF(struct tc_flower_key, ipv4.ipv4_dst),
-        0
+        0,
+        true
     }, {
         TCA_PEDIT_KEY_EX_HDR_TYPE_IP4,
         8,
         offsetof(struct tc_flower_key, ipv4.rewrite_ttl),
         MEMBER_SIZEOF(struct tc_flower_key, ipv4.rewrite_ttl),
-        0
+        0,
+        true
     }, {
         TCA_PEDIT_KEY_EX_HDR_TYPE_IP4,
         1,
         offsetof(struct tc_flower_key, ipv4.rewrite_tos),
         MEMBER_SIZEOF(struct tc_flower_key, ipv4.rewrite_tos),
-        0
+        0,
+        true
     }, {
         TCA_PEDIT_KEY_EX_HDR_TYPE_IP6,
         7,
         offsetof(struct tc_flower_key, ipv6.rewrite_hlimit),
         MEMBER_SIZEOF(struct tc_flower_key, ipv6.rewrite_hlimit),
-        0
+        0,
+        false
     }, {
         TCA_PEDIT_KEY_EX_HDR_TYPE_IP6,
         8,
         offsetof(struct tc_flower_key, ipv6.ipv6_src),
         MEMBER_SIZEOF(struct tc_flower_key, ipv6.ipv6_src),
-        0
+        0,
+        true
     }, {
         TCA_PEDIT_KEY_EX_HDR_TYPE_IP6,
         24,
         offsetof(struct tc_flower_key, ipv6.ipv6_dst),
         MEMBER_SIZEOF(struct tc_flower_key, ipv6.ipv6_dst),
-        0
+        0,
+        true
     }, {
         TCA_PEDIT_KEY_EX_HDR_TYPE_IP6,
         0,
         offsetof(struct tc_flower_key, ipv6.rewrite_tclass),
         MEMBER_SIZEOF(struct tc_flower_key, ipv6.rewrite_tclass),
-        4
+        4,
+        false
     }, {
         TCA_PEDIT_KEY_EX_HDR_TYPE_ETH,
         6,
         offsetof(struct tc_flower_key, src_mac),
         MEMBER_SIZEOF(struct tc_flower_key, src_mac),
-        0
+        0,
+        true
     }, {
         TCA_PEDIT_KEY_EX_HDR_TYPE_ETH,
         0,
         offsetof(struct tc_flower_key, dst_mac),
         MEMBER_SIZEOF(struct tc_flower_key, dst_mac),
-        0
+        0,
+        true
     }, {
         TCA_PEDIT_KEY_EX_HDR_TYPE_ETH,
         12,
         offsetof(struct tc_flower_key, eth_type),
         MEMBER_SIZEOF(struct tc_flower_key, eth_type),
-        0
+        0,
+        true
     }, {
         TCA_PEDIT_KEY_EX_HDR_TYPE_TCP,
         0,
         offsetof(struct tc_flower_key, tcp_src),
         MEMBER_SIZEOF(struct tc_flower_key, tcp_src),
-        0
+        0,
+        true
     }, {
         TCA_PEDIT_KEY_EX_HDR_TYPE_TCP,
         2,
         offsetof(struct tc_flower_key, tcp_dst),
         MEMBER_SIZEOF(struct tc_flower_key, tcp_dst),
-        0
+        0,
+        true
     }, {
         TCA_PEDIT_KEY_EX_HDR_TYPE_UDP,
         0,
         offsetof(struct tc_flower_key, udp_src),
         MEMBER_SIZEOF(struct tc_flower_key, udp_src),
-        0
+        0,
+        true
     }, {
         TCA_PEDIT_KEY_EX_HDR_TYPE_UDP,
         2,
         offsetof(struct tc_flower_key, udp_dst),
         MEMBER_SIZEOF(struct tc_flower_key, udp_dst),
-        0
+        0,
+        true
     },
 };
 
 static inline int
 csum_update_flag(struct tc_flower *flower,
-                 enum pedit_header_type htype);
+                 enum pedit_header_type htype, bool include_icmp_flag);
 
 struct tcmsg *
 tc_make_request(int ifindex, int type, unsigned int flags,
@@ -1098,11 +1114,6 @@ nl_parse_act_pedit(struct nlattr *options, struct tc_flower *flower)
 
         type = nl_attr_get_u16(ex_type);
 
-        err = csum_update_flag(flower, type);
-        if (err) {
-            return err;
-        }
-
         for (int j = 0; j < ARRAY_SIZE(flower_pedit_map); j++) {
             struct flower_key_to_pedit *m = &flower_pedit_map[j];
             int flower_off = m->flower_offset;
@@ -1136,6 +1147,11 @@ nl_parse_act_pedit(struct nlattr *options, struct tc_flower *flower)
                 } else if (keys->off + 4 > mf + m->size) {
                     zero_bits = 8 * (keys->off + 4 - mf - m->size);
                     mask &= htonl(UINT32_MAX << zero_bits);
+                }
+
+                err = csum_update_flag(flower, type, m->include_icmp_flag);
+                if (err) {
+                    return err;
                 }
 
                 val = get_unaligned_be32(dst_m);
@@ -2841,7 +2857,8 @@ calc_offsets(struct tc_action *action, struct flower_key_to_pedit *m,
 
 static inline int
 csum_update_flag(struct tc_flower *flower,
-                 enum pedit_header_type htype) {
+                 enum pedit_header_type htype, bool include_icmp_flag)
+{
     /* Explictily specifiy the csum flags so HW can return EOPNOTSUPP
      * if it doesn't support a checksum recalculation of some headers.
      * And since OVS allows a flow such as
@@ -2867,7 +2884,9 @@ csum_update_flag(struct tc_flower *flower,
             flower->needs_full_ip_proto_mask = true;
         } else if (flower->key.ip_proto == IPPROTO_ICMPV6) {
             flower->needs_full_ip_proto_mask = true;
-            flower->csum_update_flags |= TCA_CSUM_UPDATE_FLAG_ICMP;
+            if (include_icmp_flag) {
+                flower->csum_update_flags |= TCA_CSUM_UPDATE_FLAG_ICMP;
+            }
         } else {
             VLOG_WARN_RL(&error_rl,
                          "can't offload rewrite of IP/IPV6 with ip_proto: %d",
@@ -2994,7 +3013,7 @@ nl_msg_put_flower_rewrite_pedits(struct ofpbuf *request,
             pedit_key->val = data_word & mask_word;
             sel.sel.nkeys++;
 
-            err = csum_update_flag(flower, m->htype);
+            err = csum_update_flag(flower, m->htype, m->include_icmp_flag);
             if (err) {
                 return err;
             }
