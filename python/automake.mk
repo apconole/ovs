@@ -80,7 +80,7 @@ EXTRA_DIST += \
 # C extension support.
 EXTRA_DIST += python/ovs/_json.c
 
-PYFILES = $(ovs_pyfiles) python/ovs/dirs.py $(ovstest_pyfiles) $(ovs_pytests)
+PYFILES = $(ovs_pyfiles) python/ovs/dirs.py python/ovs/setup.py $(ovstest_pyfiles) $(ovs_pytests)
 
 EXTRA_DIST += $(PYFILES)
 PYCOV_CLEAN_FILES += $(PYFILES:.py=.py,cover)
@@ -144,7 +144,7 @@ EXTRA_DIST += python/ovs/dirs.py.template
 CLEANFILES += python/ovs/dirs.py
 
 ALL_LOCAL += $(srcdir)/python/setup.py
-$(srcdir)/python/setup.py: python/setup.py.template
+$(srcdir)/python/setup.py: python/setup.py.template config.status
 	$(AM_V_GEN)sed \
 		-e 's,[@]VERSION[@],$(VERSION),g' \
 		< $? > $@.tmp && \
