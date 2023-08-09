@@ -43,6 +43,7 @@ ovs_pyfiles = \
 	python/ovs/poller.py \
 	python/ovs/process.py \
 	python/ovs/reconnect.py \
+	python/ovs/setup.py \
 	python/ovs/socket_util.py \
 	python/ovs/stream.py \
 	python/ovs/timeval.py \
@@ -80,13 +81,13 @@ EXTRA_DIST += \
 # C extension support.
 EXTRA_DIST += python/ovs/_json.c
 
-PYFILES = $(ovs_pyfiles) python/ovs/dirs.py python/ovs/setup.py $(ovstest_pyfiles) $(ovs_pytests)
+PYFILES = $(ovs_pyfiles) python/ovs/dirs.py $(ovstest_pyfiles) $(ovs_pytests)
 
 EXTRA_DIST += $(PYFILES)
 PYCOV_CLEAN_FILES += $(PYFILES:.py=.py,cover)
 
 FLAKE8_PYFILES += \
-	$(filter-out python/ovs/compat/% python/ovs/dirs.py,$(PYFILES)) \
+	$(filter-out python/ovs/compat/% python/ovs/setup.py python/ovs/dirs.py,$(PYFILES)) \
 	python/build/__init__.py \
 	python/build/extract_ofp_fields.py \
 	python/build/nroff.py \
@@ -111,7 +112,7 @@ ovs-install-data-local:
 	$(INSTALL_DATA) python/ovs/dirs.py.tmp $(DESTDIR)$(pkgdatadir)/python/ovs/dirs.py
 	rm python/ovs/dirs.py.tmp
 
-python-sdist: $(srcdir)/python/setup.py $(srcdir)/python/ovs/version.py $(ovs_pyfiles) python/ovs/dirs.py
+python-sdist: $(srcdir)/python/ovs/version.py $(ovs_pyfiles) python/ovs/dirs.py
 	(cd python/ && $(PYTHON3) setup.py sdist)
 
 pypi-upload: $(srcdir)/python/setup.py $(srcdir)/python/ovs/version.py $(ovs_pyfiles) python/ovs/dirs.py
