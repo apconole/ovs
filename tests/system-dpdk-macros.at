@@ -183,15 +183,6 @@ m4_define([OVS_CHECK_TCPDUMP],
     [AT_SKIP_IF([:])])
 
 
-# FIXME: disable some failing tests, waiting for a fix on net/tap in DPDK
-m4_define([CHECK_CONNTRACK],
-    [AT_SKIP_IF([:])])
-m4_define([OVS_CHECK_GENEVE_UDP6ZEROCSUM],
-    [AT_SKIP_IF([:])])
-m4_define([OVS_CHECK_VXLAN_UDP6ZEROCSUM],
-    [AT_SKIP_IF([:])])
-
-
 # Fake a veth by creating a tap on kernel side and plug it in OVS using the
 # net/tap DPDK driver.
 m4_define([ADD_VETH],
