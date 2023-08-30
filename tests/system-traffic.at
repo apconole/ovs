@@ -3813,6 +3813,73 @@ OVS_WAIT_UNTIL([ovs-pcap p0.pcap | grep -q "f00000010101f00000010102080045c00045
 OVS_TRAFFIC_VSWITCHD_STOP
 AT_CLEANUP
 
+AT_SETUP([conntrack - IPv4 UDP zero checksum])
+dnl Checks sending zero checksum packets for udp over ipv4
+CHECK_CONNTRACK()
+OVS_TRAFFIC_VSWITCHD_START()
+OVS_CHECK_CT_CLEAR()
+
+ADD_NAMESPACES(at_ns0, at_ns1)
+ADD_VETH(p0, at_ns0, br0, "10.1.1.1/24", "f0:00:00:01:01:01")
+ADD_VETH(p1, at_ns1, br0, "10.1.1.2/24", "f0:00:00:01:01:02")
+
+dnl Setup conntrack flows
+AT_DATA([flows.txt], [dnl
+table=0,priority=10  ip,udp,ct_state=-trk action=ct(zone=1,table=1)
+table=0,priority=0   action=drop
+table=1,priority=10  ct_state=-est+trk+new,ip,ct_zone=1,in_port=1 action=ct(commit,table=2)
+table=1,priority=10  ct_state=+est-new+trk,ct_zone=1,in_port=1 action=resubmit(,2)
+table=1,priority=0   action=drop
+table=2,priority=10  ct_state=+trk+new,in_port=1 action=2
+table=2,priority=10  ct_state=+trk+est action=2
+])
+AT_CHECK([ovs-ofctl --bundle add-flows br0 flows.txt])
+
+dnl sending udp pkt with 0000 checksum
+NS_CHECK_EXEC([at_ns0], [$PYTHON3 $srcdir/sendpkt.py p0 f0 00 00 01 01 02 f0 00 00 01 01 01 08 00 45 00 00 28 00 01 00 00 40 11 64 c0 0a 01 01 01 0a 01 01 02 04 d2 04 d2 00 14 00 00 aa aa aa aa aa aa aa aa aa aa aa aa > /dev/null])
+
+OVS_WAIT_UNTIL([ovs-appctl dpctl/dump-conntrack | grep "udp"])
+
+dnl ensure CT picked up the packet
+AT_CHECK([ovs-appctl dpctl/dump-conntrack | FORMAT_CT(10.1.1)], [0], [dnl
+udp,orig=(src=10.1.1.1,dst=10.1.1.2,sport=<cleared>,dport=<cleared>),reply=(src=10.1.1.2,dst=10.1.1.1,sport=<cleared>,dport=<cleared>)
+])
+
+dnl clear CT tuples
+AT_CHECK([ovs-appctl dpctl/flush-conntrack])
+AT_CHECK([ovs-appctl dpctl/dump-conntrack | grep "udp"], [1])
+
+dnl send UDP with ffff checksum
+NS_CHECK_EXEC([at_ns0], [$PYTHON3 $srcdir/sendpkt.py p0 f0 00 00 01 01 02 f0 00 00 01 01 01 08 00 45 00 00 40 00 01 00 00 40 11 64 a8 0a 01 01 01 0a 01 01 02 04 d2 04 d2 00 2c ff ff 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 df ed > /dev/null])
+OVS_WAIT_UNTIL([ovs-appctl dpctl/dump-conntrack | grep "udp"])
+
+dnl ensure CT picked up the packet
+AT_CHECK([ovs-appctl dpctl/dump-conntrack | FORMAT_CT(10.1.1)], [0], [dnl
+udp,orig=(src=10.1.1.1,dst=10.1.1.2,sport=<cleared>,dport=<cleared>),reply=(src=10.1.1.2,dst=10.1.1.1,sport=<cleared>,dport=<cleared>)
+])
+
+dnl clear CT tuples
+AT_CHECK([ovs-appctl dpctl/flush-conntrack])
+AT_CHECK([ovs-appctl dpctl/dump-conntrack | grep "udp"], [1])
+
+dnl sending udp pkt with bad checksum
+NS_CHECK_EXEC([at_ns0], [$PYTHON3 $srcdir/sendpkt.py p0 f0 00 00 01 01 02 f0 00 00 01 01 01 08 00 45 00 00 28 00 01 00 00 40 11 64 c0 0a 01 01 01 0a 01 01 02 04 d2 04 d2 00 14 11 11 aa aa aa aa aa aa aa aa aa aa aa aa > /dev/null])
+
+dnl We call a sleep here to ensure that we let the system get through any
+dnl needed upcalls.  Once the sleep is expired, we can check the drop counter
+dnl in table 1 for our bad csum packet, and ensure that there are no entries
+dnl in the conntrack table.
+sleep 1
+
+AT_CHECK([ovs-appctl dpctl/dump-conntrack | FORMAT_CT(10.1.1)], [0], [dnl
+])
+AT_CHECK([ovs-ofctl dump-flows br0 | grep 'table=1,' | dnl
+          grep 'actions=drop' | strip_duration], [0], [ dnl
+cookie=0x0,  table=1, n_packets=1, n_bytes=54, idle_age=1, priority=0 actions=drop
+])
+OVS_TRAFFIC_VSWITCHD_STOP
+AT_CLEANUP
+
 AT_SETUP([conntrack - IPv4 fragmentation])
 CHECK_CONNTRACK()
 OVS_TRAFFIC_VSWITCHD_START()
