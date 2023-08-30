@@ -40,6 +40,7 @@
 #include "openvswitch/vlog.h"
 
 VLOG_DEFINE_THIS_MODULE(timeval);
+COVERAGE_DEFINE(long_poll_interval);
 
 #if !defined(HAVE_CLOCK_GETTIME)
 typedef unsigned int clockid_t;
@@ -645,6 +646,8 @@ log_poll_interval(long long int last_wakeup)
         struct rusage rusage;
 
         if (!getrusage_thread(&rusage)) {
+            COVERAGE_INC(long_poll_interval);
+
             VLOG_WARN("Unreasonably long %lldms poll interval"
                       " (%lldms user, %lldms system)",
                       interval,
