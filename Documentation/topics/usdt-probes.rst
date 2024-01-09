@@ -214,6 +214,7 @@ Available probes in ``ovs_vswitchd``:
 - dpif_recv:recv_upcall
 - main:poll_block
 - main:run_start
+- revalidate:flow_result
 - revalidate_ukey\_\_:entry
 - revalidate_ukey\_\_:exit
 - udpif_revalidator:start_dump
