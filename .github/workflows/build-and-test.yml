@@ -650,3 +650,46 @@ jobs:
         path: |
           rpm/rpmbuild/SRPMS/*.rpm
           rpm/rpmbuild/RPMS/*/*.rpm
+
+  windows-vm-builds:
+    name: ${{ join(matrix.config.*, '-') }}
+    runs-on: ${{ matrix.config.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - os: windows-2022
+            compiler: mingw64
+          - os: windows-2022
+            compiler: mingw32
+          - os: windows-2022
+            compiler: clang64
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ env.python_default }}
+
+    - name: configure msys2
+      uses: msys2/setup-msys2@v2
+      with:
+        msystem: ${{ matrix.config.compiler }}
+        update: true
+        install: >-
+          autotools
+          
+    - name: Install OpenSSL (Windows)
+      if: runner.os == 'Windows'
+      shell: powershell
+      run: |
+          echo "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" | Out-File -FilePath $env:GITHUB_ENV -Append
+          vcpkg install openssl:x64-windows-static-md
+
+    - name: Build OVS
+      shell: msys2 {0}
+      run: |
+          ./.ci/windows-prepare.sh && ./.ci/windows-build.sh
