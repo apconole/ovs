@@ -361,6 +361,20 @@ check-dpdk: all
 	set $(SHELL) '$(SYSTEM_DPDK_TESTSUITE)' -C tests  AUTOTEST_PATH='$(AUTOTEST_PATH)'; \
 	"$$@" $(TESTSUITEFLAGS) -j1 || (test X'$(RECHECK)' = Xyes && "$$@" --recheck)
 
+# An explicit ordering dependency to avoid race between removing the
+# $(DISTCLEANFILES) and running the testsite clean.  Unfortunately, it means
+# overriding the default distclean-am target.  Default distclean-am has all
+# dependencies of distclean-custom, plus clean-am.  'manpages.mk' is generated
+# every time any target is invoked, so since clean-am is no longer part of the
+# last target, we have to call the clean-generic manually to remove the
+# generated file.
+distclean-am: clean-am
+	@$(MAKE) distclean-custom
+distclean-custom: distclean-compile distclean-generic distclean-hdr \
+		distclean-libtool distclean-tags
+	@$(MAKE) clean-generic
+.PHONY: distclean-am distclean-custom
+
 clean-local:
 	test ! -f '$(TESTSUITE)' || $(SHELL) '$(TESTSUITE)' -C tests --clean
 
