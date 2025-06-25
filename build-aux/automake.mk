@@ -17,6 +17,7 @@ EXTRA_DIST += \
 	build-aux/initial-tab-allowed-files \
 	build-aux/sodepends.py \
 	build-aux/soexpand.py \
+	build-aux/spelling_words.txt \
 	build-aux/text2c \
 	build-aux/xml2nroff
 
