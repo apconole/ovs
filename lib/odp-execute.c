@@ -854,6 +854,7 @@ requires_datapath_assistance(const struct nlattr *a)
     case OVS_ACTION_ATTR_CT:
     case OVS_ACTION_ATTR_METER:
     case OVS_ACTION_ATTR_PSAMPLE:
+    case OVS_ACTION_ATTR_SOCKET:
         return true;
 
     case OVS_ACTION_ATTR_SET:
@@ -1292,6 +1293,7 @@ odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
         case OVS_ACTION_ATTR_POP_VLAN:
         case OVS_ACTION_ATTR_PUSH_VLAN:
         case OVS_ACTION_ATTR_SET_MASKED:
+        case OVS_ACTION_ATTR_SOCKET:
             OVS_NOT_REACHED();
         }
 

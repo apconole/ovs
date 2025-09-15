@@ -1198,7 +1198,8 @@ dpif_execute_helper_cb(void *aux_, struct dp_packet_batch *packets_,
     case OVS_ACTION_ATTR_USERSPACE:
     case OVS_ACTION_ATTR_PSAMPLE:
     case OVS_ACTION_ATTR_SAMPLE:
-    case OVS_ACTION_ATTR_RECIRC: {
+    case OVS_ACTION_ATTR_RECIRC:
+    case OVS_ACTION_ATTR_SOCKET: {
         struct dpif_execute execute;
         struct pkt_metadata *md = &packet->md;
 

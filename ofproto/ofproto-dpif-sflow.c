@@ -1175,6 +1175,13 @@ dpif_sflow_read_actions(const struct flow *flow,
             }
             break;
 
+        case OVS_ACTION_ATTR_SOCKET:
+            /* XXX: This action should really do some kind of
+             * proper lookup to determine the output port for the
+             * sflow details.  For now, 'drop' it, but it is a
+             * needed bit of details. */
+            break;
+
         case OVS_ACTION_ATTR_TRUNC:
         case OVS_ACTION_ATTR_USERSPACE:
         case OVS_ACTION_ATTR_RECIRC:

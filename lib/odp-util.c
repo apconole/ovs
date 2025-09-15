@@ -101,6 +101,10 @@ static int parse_odp_action(struct parse_odp_context *context, const char *s,
 static int parse_odp_action__(struct parse_odp_context *context, const char *s,
                             struct ofpbuf *actions);
 
+static int parse_action_list(struct parse_odp_context *context, const char *s,
+                             struct ofpbuf *actions);
+
+
 /* Returns one the following for the action with the given OVS_ACTION_ATTR_*
  * 'type':
  *
@@ -146,7 +150,7 @@ odp_action_len(uint16_t type)
     case OVS_ACTION_ATTR_DEC_TTL: return ATTR_LEN_VARIABLE;
     case OVS_ACTION_ATTR_DROP: return sizeof(uint32_t);
     case OVS_ACTION_ATTR_PSAMPLE: return ATTR_LEN_VARIABLE;
-
+    case OVS_ACTION_ATTR_SOCKET: return ATTR_LEN_VARIABLE;
     case OVS_ACTION_ATTR_UNSPEC:
     case __OVS_ACTION_ATTR_MAX:
         return ATTR_LEN_INVALID;
@@ -1174,6 +1178,73 @@ format_odp_psample_action(struct ds *ds, const struct nlattr *attr)
 }
 
 static void
+format_odp_socket_action(struct ds *ds, const struct nlattr *attr,
+                         const struct hmap *portno_names)
+{
+    static const struct nl_policy ovs_sock_act_policy[] = {
+        [OVS_SOCKET_ACTION_ATTR_NETNS_ID] = { .type = NL_A_U32 },
+        [OVS_SOCKET_ACTION_ATTR_INODE]    = { .type = NL_A_U64 },
+        [OVS_SOCKET_ACTION_ATTR_ACTIONS]  = { .type = NL_A_NESTED },
+    };
+
+    struct nlattr *a[ARRAY_SIZE(ovs_sock_act_policy)];
+    ds_put_cstr(ds, "socket");
+    if (!nl_parse_nested(attr, ovs_sock_act_policy, a, ARRAY_SIZE(a))) {
+        ds_put_cstr(ds, "(error)");
+        return;
+    }
+
+    if (!a[OVS_SOCKET_ACTION_ATTR_NETNS_ID] ||
+        !a[OVS_SOCKET_ACTION_ATTR_INODE] ||
+        !a[OVS_SOCKET_ACTION_ATTR_ACTIONS]) {
+        ds_put_cstr(ds, "(error)");
+        return;
+    }
+
+    uint32_t netns_id = nl_attr_get_u32(a[OVS_SOCKET_ACTION_ATTR_NETNS_ID]);
+    uint64_t inode = nl_attr_get_u64(a[OVS_SOCKET_ACTION_ATTR_INODE]);
+    ds_put_format(ds, "(netns=%"PRIu32",inode=%"PRIu64",else(",
+                  netns_id, inode);
+    struct nlattr *acts = a[OVS_SOCKET_ACTION_ATTR_ACTIONS];
+    format_odp_actions(ds, nl_attr_get(acts), nl_attr_get_size(acts),
+                           portno_names);
+    ds_put_cstr(ds, "))");
+}
+
+static int
+parse_odp_socket_action(struct parse_odp_context *context, const char *s,
+                        struct ofpbuf *actions)
+{
+    uint32_t netns;
+    uint64_t inode;
+    int n = 0;
+
+    if (ovs_scan(s, "socket(netns=%"SCNu32",inode=%"SCNu64",else(%n",
+                 &netns, &inode, &n)) {
+        size_t sock_ofs, actions_ofs;
+        sock_ofs = nl_msg_start_nested(actions, OVS_ACTION_ATTR_SOCKET);
+        nl_msg_put_u32(actions, OVS_SOCKET_ACTION_ATTR_NETNS_ID, netns);
+        nl_msg_put_u64(actions, OVS_SOCKET_ACTION_ATTR_INODE, inode);
+        actions_ofs = nl_msg_start_nested(actions,
+                                          OVS_SOCKET_ACTION_ATTR_ACTIONS);
+        if (!strncasecmp(s + n, "drop", 4)) {
+            n += 4;
+        } else {
+            int retval = parse_action_list(context, s + n, actions);
+            if (retval < 0) {
+                return retval;
+            }
+            n += retval;
+        }
+        nl_msg_end_nested(actions, actions_ofs);
+        nl_msg_end_nested(actions, sock_ofs);
+        return s[n + 1] == ')' ? n + 2 : -EINVAL;
+    }
+
+    return -EINVAL;
+}
+
+static void
 format_odp_action(struct ds *ds, const struct nlattr *a,
                   const struct hmap *portno_names)
 {
@@ -1334,6 +1405,9 @@ format_odp_action(struct ds *ds, const struct nlattr *a,
         break;
     case OVS_ACTION_ATTR_PSAMPLE:
         format_odp_psample_action(ds, a);
+        break;
+    case OVS_ACTION_ATTR_SOCKET:
+        format_odp_socket_action(ds, a, portno_names);
         break;
     case OVS_ACTION_ATTR_UNSPEC:
     case __OVS_ACTION_ATTR_MAX:
@@ -2486,6 +2560,10 @@ parse_odp_action__(struct parse_odp_context *context, const char *s,
             nl_msg_put_u32(actions, OVS_ACTION_ATTR_OUTPUT, port);
             return n;
         }
+    }
+
+    if (!strncmp(s, "socket(", 7)) {
+        return parse_odp_socket_action(context, s, actions);
     }
 
     {

@@ -3097,6 +3097,13 @@ dpif_ipfix_read_actions(const struct flow *flow,
                                     ipfix_actions);
             break;
 
+        case OVS_ACTION_ATTR_SOCKET:
+            /* XXX: This action should really do some kind of
+             * proper lookup to determine the output port for the
+             * sflow details.  For now, 'drop' it, but it is a
+             * needed bit of details. */
+            break;
+
         /* OVS_ACTION_ATTR_USERSPACE and OVS_ACTION_ATTR_RECIRC actions can
          * yield absolutely any kind of behavior. Let's assume that flow drops
          * the packet if there isn't another clear OVS_ACTION_ATTR_OUTPUT

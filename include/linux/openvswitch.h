@@ -1125,6 +1125,7 @@ enum ovs_action_attr {
 	OVS_ACTION_ATTR_DEC_TTL,      /* Nested OVS_DEC_TTL_ATTR_*. */
 	OVS_ACTION_ATTR_DROP,         /* u32 xlate_error. */
 	OVS_ACTION_ATTR_PSAMPLE,      /* Nested OVS_PSAMPLE_ATTR_*. */
+	OVS_ACTION_ATTR_SOCKET,       /* struct ovs_action_socket. */
 
 #ifndef __KERNEL__
 	OVS_ACTION_ATTR_TUNNEL_PUSH,   /* struct ovs_action_push_tnl*/
@@ -1234,5 +1235,16 @@ enum ovs_dec_ttl_attr {
 				      * actions in clone will not change flow
 				      * keys. False otherwise.
 				      */
+
+enum ovs_socket_action_attr {
+	OVS_SOCKET_ACTION_ATTR_UNSPEC,
+	OVS_SOCKET_ACTION_ATTR_NETNS_ID,
+	OVS_SOCKET_ACTION_ATTR_INODE,
+	OVS_SOCKET_ACTION_ATTR_ACTIONS,
+
+	__OVS_SOCKET_ACTION_ATTR_MAX
+};
+
+#define OVS_SOCKET_ACTION_ATTR_MAX (__OVS_SOCKET_ACTION_ATTR_MAX - 1)
 
 #endif /* _LINUX_OPENVSWITCH_H */
