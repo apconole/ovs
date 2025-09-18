@@ -51,6 +51,7 @@ dest
 dhcp
 dhcpv4
 dhcpv6
+diag
 dnat
 dns
 dpcls
@@ -107,6 +108,7 @@ icmpv6
 idl
 ifdef
 ifindex
+inet
 initializer
 inlined
 int
@@ -177,6 +179,7 @@ netdev
 netdevs
 netflow
 netlink
+netns
 networkmanager
 nic
 nicira

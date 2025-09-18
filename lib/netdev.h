@@ -300,6 +300,8 @@ int netdev_get_status(const struct netdev *, struct smap *);
 int netdev_arp_lookup(const struct netdev *, ovs_be32 ip,
                       struct eth_addr *mac);
 
+int netdev_get_target_ns(const struct netdev *, int *target_ns);
+
 struct netdev *netdev_find_dev_by_in4(const struct in_addr *);
 
 /* Statistics. */

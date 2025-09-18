@@ -1659,6 +1659,18 @@ netdev_arp_lookup(const struct netdev *netdev,
     return error;
 }
 
+/* Retrieves the target network namespace ID for 'netdev'. On success, stores
+ * the namespace ID in '*target_ns' and returns 0. The namespace ID follows
+ * the same semantics as netnsid.h (NETNSID_LOCAL for local namespace,
+ * positive values for remote namespaces). */
+int
+netdev_get_target_ns(const struct netdev *netdev, int *target_ns)
+{
+    return (netdev->netdev_class->get_target_ns
+            ? netdev->netdev_class->get_target_ns(netdev, target_ns)
+            : EOPNOTSUPP);
+}
+
 /* Returns true if carrier is active (link light is on) on 'netdev'. */
 bool
 netdev_get_carrier(const struct netdev *netdev)

@@ -775,6 +775,15 @@ struct netdev_class {
     int (*arp_lookup)(const struct netdev *netdev, ovs_be32 ip,
                       struct eth_addr *mac);
 
+    /* Retrieves the target network namespace ID for 'netdev'. On success,
+     * stores the namespace ID in '*target_ns' and returns 0. The namespace
+     * ID follows the same semantics as netnsid.h (NETNSID_LOCAL for local
+     * namespace, positive values for remote namespaces).
+     *
+     * This function may be set to null if it would always return EOPNOTSUPP
+     * anyhow. */
+    int (*get_target_ns)(const struct netdev *netdev, int *target_ns);
+
     /* Retrieves the current set of flags on 'netdev' into '*old_flags'.  Then,
      * turns off the flags that are set to 1 in 'off' and turns on the flags
      * that are set to 1 in 'on'.  (No bit will be set to 1 in both 'off' and

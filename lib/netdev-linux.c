@@ -96,6 +96,10 @@ COVERAGE_DEFINE(netdev_linux_unknown_l4_csum);
 #ifndef IFLA_IF_NETNSID
 #define IFLA_IF_NETNSID 0x45
 #endif
+
+#ifndef IFLA_NET_NS_ID
+#define IFLA_NET_NS_ID 46
+#endif
 /* These were introduced in Linux 2.6.14, so they might be missing if we have
  * old headers. */
 #ifndef ADVERTISED_Pause
@@ -3761,6 +3765,84 @@ netdev_linux_arp_lookup(const struct netdev *netdev,
     return retval;
 }
 
+static int
+netdev_linux_get_netns_id_by_ifindex(int ifindex, int *netns_id,
+                                     int *link_netns_id)
+{
+    static const struct nl_policy policy[IFLA_MAX + 1] = {
+        [IFLA_NET_NS_ID]    = { .type = NL_A_U32, .optional = true },
+        [IFLA_LINK_NETNSID] = { .type = NL_A_U32, .optional = true },
+    };
+    struct ofpbuf request, *reply = NULL;
+    struct nlattr *attrs[IFLA_MAX + 1];
+    struct ifinfomsg *ifi;
+    int error;
+
+    /* Build RTM_GETLINK request for the specific ifindex */
+    ofpbuf_init(&request, 0);
+    nl_msg_put_nlmsghdr(&request, 0, RTM_GETLINK, NLM_F_REQUEST);
+    ifi = ofpbuf_put_zeros(&request, sizeof *ifi);
+    ifi->ifi_family = AF_UNSPEC;
+    ifi->ifi_index = ifindex;
+
+    error = nl_transact(NETLINK_ROUTE, &request, &reply);
+    ofpbuf_uninit(&request);
+
+    if (error) {
+        return error;
+    }
+
+    if (netns_id) {
+        /* Assume it is the current namespace. */
+        *netns_id = NETNSID_LOCAL;
+    }
+
+    if (link_netns_id) {
+        /* Assume it is the current namespace. */
+        *link_netns_id = NETNSID_LOCAL;
+    }
+
+    /* Parse the response */
+    if (!nl_policy_parse(reply, NLMSG_HDRLEN + sizeof(struct ifinfomsg),
+                         policy, attrs, IFLA_MAX)) {
+        VLOG_WARN_RL(&rl, "Failed to parse rtnl class.");
+        error = EPROTO;
+        goto out;
+    }
+
+    if (attrs[IFLA_NET_NS_ID] && netns_id) {
+        *netns_id = (int) nl_attr_get_u32(attrs[IFLA_NET_NS_ID]);
+    }
+    if (attrs[IFLA_LINK_NETNSID] && link_netns_id) {
+        *link_netns_id = (int) nl_attr_get_u32(attrs[IFLA_LINK_NETNSID]);
+    }
+
+out:
+    ofpbuf_delete(reply);
+    return error;
+}
+
+static int
+netdev_linux_get_target_ns(const struct netdev *netdev, int *target_ns)
+{
+    int contained_ns, linked_ns;
+    int ifindex;
+    int error;
+
+    error = get_ifindex(netdev, &ifindex);
+
+    if (error) {
+        return EOPNOTSUPP;
+    }
+
+    error = netdev_linux_get_netns_id_by_ifindex(ifindex, &contained_ns,
+                                                 &linked_ns);
+    if (!error) {
+        *target_ns = linked_ns;
+    }
+    return error;
+}
+
 static unsigned int
 nd_to_iff_flags(enum netdev_flags nd)
 {
@@ -3874,6 +3956,7 @@ exit:
     .add_router = netdev_linux_add_router,                      \
     .get_next_hop = netdev_linux_get_next_hop,                  \
     .arp_lookup = netdev_linux_arp_lookup,                      \
+    .get_target_ns = netdev_linux_get_target_ns,                \
     .update_flags = netdev_linux_update_flags,                  \
     .rxq_alloc = netdev_linux_rxq_alloc,                        \
     .rxq_dealloc = netdev_linux_rxq_dealloc,                    \
