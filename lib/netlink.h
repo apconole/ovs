@@ -107,6 +107,9 @@ void nl_msg_push_string(struct ofpbuf *, uint16_t type, const char *value);
 /* Separating buffers into individual messages. */
 struct nlmsghdr *nl_msg_next(struct ofpbuf *buffer, struct ofpbuf *msg);
 
+/* Data accessor for getting at the nlmsg data */
+int nl_msg_data(const struct nlmsghdr *, size_t, void **);
+
 /* Sizes of various attribute types, in bytes, including the attribute header
  * and padding.
  *

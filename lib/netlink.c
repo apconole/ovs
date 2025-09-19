@@ -630,6 +630,30 @@ nl_attr_oversized(size_t payload_size)
 {
     return payload_size > UINT16_MAX - NLA_HDRLEN;
 }
+
+/* Gets a pointer to the data portion of a netlink message.
+ * Returns 0 on success, or an appropriate error for excaptions. */
+int nl_msg_data(const struct nlmsghdr *nlh, size_t size, void **data)
+{
+    size_t payload_len;
+
+    if (!nlh || !data) {
+        return EINVAL;
+    }
+
+    if (nlh->nlmsg_len < NLMSG_HDRLEN) {
+        return EBADMSG;
+    }
+
+    payload_len = nlh->nlmsg_len - NLMSG_HDRLEN;
+    if (payload_len < size) {
+        return EBADMSG;
+    }
+
+    *data = (char *) nlh + NLMSG_HDRLEN;
+    return 0;
+}
+
 
 /* Attributes. */
 

@@ -16,6 +16,7 @@
 
 #include <config.h>
 
+#include <errno.h>
 #include <string.h>
 
 #include "netlink.h"
@@ -29,6 +30,12 @@ struct nlattr_fixture {
     uint8_t data[32];
 };
 
+struct nl_dummy_payload {
+    int x;
+    char y;
+};
+
+
 /* nla_len is an inline function in the kernel net/netlink header, which we
  * don't necessarilly have at build time, so provide our own with
  * non-conflicting name. */
@@ -38,6 +45,62 @@ _nla_len(const struct nlattr *nla) {
 }
 
 #define TEST_POLICY_ATTR 42
+
+
+
+static void
+test_nl_valid_data(void)
+{
+    union {
+        struct nlmsghdr align;
+        char buf[NLMSG_HDRLEN + sizeof(struct nl_dummy_payload)];
+    } u;
+    struct nlmsghdr *nlh = (struct nlmsghdr *) &u.align;
+    struct nl_dummy_payload *p;
+
+    nlh->nlmsg_len = NLMSG_HDRLEN + sizeof *p;
+    nlh->nlmsg_type = 0;
+    nlh->nlmsg_flags = 0;
+    nlh->nlmsg_seq = 0;
+    nlh->nlmsg_pid = 0;
+
+    int err = nl_msg_data(nlh, sizeof *p, (void **)&p);
+    ovs_assert(err == 0);
+    ovs_assert(p == (void *)((char *) nlh + NLMSG_HDRLEN));
+}
+
+static void
+test_nl_only_header(void)
+{
+    union {
+        struct nlmsghdr align;
+        char buf[NLMSG_HDRLEN + sizeof(struct nl_dummy_payload)];
+    } u;
+    struct nlmsghdr *nlh = (struct nlmsghdr *) &u.align;
+    struct nl_dummy_payload *p;
+
+    /* Too short: length only header, no payload */
+    nlh->nlmsg_len = NLMSG_HDRLEN;
+    int err = nl_msg_data(nlh, sizeof *p, (void **)&p);
+    ovs_assert(err == EBADMSG);
+}
+
+static void
+test_nl_short_data(void)
+{
+    union {
+        struct nlmsghdr align;
+        char buf[NLMSG_HDRLEN + 1]; /* only 1 byte of payload */
+    } u;
+    struct nlmsghdr *nlh = (struct nlmsghdr *) &u.align;
+    char *p;
+
+    nlh->nlmsg_len = sizeof u.buf;
+    int err = nl_msg_data(nlh, 8, (void **)&p);
+    ovs_assert(err == EBADMSG);
+}
+
+
 
 static void
 test_nl_policy_parse_ll_addr(struct ovs_cmdl_context *ctx OVS_UNUSED) {
@@ -134,8 +197,17 @@ test_nl_policy_parse_ll_addr(struct ovs_cmdl_context *ctx OVS_UNUSED) {
     memset(&attrs, 0, sizeof *attrs);
 }
 
+static void
+test_nl_payload(struct ovs_cmdl_context *ctx OVS_UNUSED)
+{
+    test_nl_valid_data();
+    test_nl_only_header();
+    test_nl_short_data();
+}
+
 static const struct ovs_cmdl_command commands[] = {
     {"ll_addr", "", 0, 0, test_nl_policy_parse_ll_addr, OVS_RO},
+    {"payload", "", 0, 0, test_nl_payload, OVS_RO},
     {NULL, NULL, 0, 0, NULL, OVS_RO},
 };
 

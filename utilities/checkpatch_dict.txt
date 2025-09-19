@@ -184,6 +184,7 @@ networkmanager
 nic
 nicira
 nics
+nlmsg
 ns
 nsec
 num
