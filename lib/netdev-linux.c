@@ -19,6 +19,8 @@
 #include "netdev-linux.h"
 #include "netdev-linux-private.h"
 
+#include <ctype.h>
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <sys/types.h>
@@ -31,19 +33,23 @@
 #include <linux/if_ether.h>
 #include <linux/if_packet.h>
 #include <linux/if_tun.h>
+#include <linux/inet_diag.h>
 #include <linux/types.h>
 #include <linux/ethtool.h>
 #include <linux/mii.h>
 #include <linux/rtnetlink.h>
+#include <linux/sock_diag.h>
 #include <linux/sockios.h>
 #include <linux/virtio_net.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/uio.h>
+#include <sys/wait.h>
 #include <net/if.h>
 #include <net/if_arp.h>
 #include <net/route.h>
 #include <poll.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -91,6 +97,7 @@ COVERAGE_DEFINE(netdev_get_ethtool);
 COVERAGE_DEFINE(netdev_set_ethtool);
 COVERAGE_DEFINE(netdev_linux_invalid_l4_csum);
 COVERAGE_DEFINE(netdev_linux_unknown_l4_csum);
+COVERAGE_DEFINE(netdev_linux_proc_net_walked);
 
 
 #ifndef IFLA_IF_NETNSID
@@ -3840,6 +3847,201 @@ netdev_linux_get_target_ns(const struct netdev *netdev, int *target_ns)
     if (!error) {
         *target_ns = linked_ns;
     }
+
+    return error;
+}
+
+static ovs_be16 hex_to_port(const char *hex_port)
+{
+    return CONSTANT_HTONS(strtoul(hex_port, NULL, 16));
+}
+
+static int
+get_iflink_id(const char *name)
+{
+    char path[256], buf[256];
+    ssize_t len;
+    int fd, ret;
+
+    snprintf(path, sizeof(path), "/sys/class/net/%s/iflink", name);
+    fd = open(path, O_RDONLY);
+    if (fd < 0) {
+        return -errno;
+    }
+
+    len = read(fd, buf, 256);
+    if (len < 0) {
+        ret = -errno;
+        goto out;
+    }
+
+    ret = strtol(buf, NULL, 10);
+
+out:
+    close(fd);
+    return ret;
+}
+
+static bool
+dev_mcast_matches(int index, const char *pid)
+{
+    char path[512];
+    snprintf(path, sizeof(path), "/proc/%s/net/dev_mcast", pid);
+
+    FILE *f = fopen(path, "r");
+    if (!f) {
+        return false;
+    }
+
+    char line[512];
+    while (fgets(line, sizeof(line), f)) {
+        int ifindex;
+        if (ovs_scan(line, "%d", &ifindex)) {
+            if (ifindex == index) {
+                fclose(f);
+                return true;
+            }
+        }
+    }
+
+    fclose(f);
+    return false;
+}
+
+static int
+netdev_linux_get_socket_inode(const struct netdev *netdev, int proto, int af,
+                              const void *src, ovs_be16 src_port,
+                              const void *dst, ovs_be16 dst_port,
+                              uint64_t *inode_out, uint64_t *netns_out)
+{
+    int error, devid;
+    DIR *proc_dir;
+
+    if (proto != IPPROTO_TCP || !inode_out || !netns_out ||
+        (af != AF_INET && af != AF_INET6)) {
+        error = EINVAL;
+        goto out;
+    }
+
+    devid = get_iflink_id(netdev_get_name(netdev));
+    if (devid < 0) {
+        error = get_ifindex(netdev, &devid);
+    }
+
+    if (devid < 0) {
+        goto out;
+    }
+
+    error = ENOENT;
+    proc_dir = opendir("/proc");
+    if (!proc_dir) {
+        error = errno;
+        goto out;
+    }
+
+    *netns_out = NETNSID_LOCAL;
+
+    struct dirent *entry;
+    while ((entry = readdir(proc_dir))) {
+        char netns_path[512], netns_link[256], tcp_path[512], line[256];
+        const char *pid = entry->d_name;
+        ssize_t r;
+        FILE *f;
+
+        if (!isdigit(pid[0]) || !dev_mcast_matches(devid, pid)) {
+            continue;
+        }
+
+        COVERAGE_INC(netdev_linux_proc_net_walked);
+
+        snprintf(netns_path, sizeof(netns_path), "/proc/%s/ns/net", pid);
+        r = readlink(netns_path, netns_link, sizeof(netns_link) - 1);
+        if (r < 0) {
+            ovs_strlcpy(netns_link, "unknown", sizeof(netns_link));
+        } else {
+            netns_link[r] = 0;
+        }
+
+        if (af == AF_INET) {
+            snprintf(tcp_path, sizeof(tcp_path), "/proc/%s/net/tcp", pid);
+        } else {
+            snprintf(tcp_path, sizeof(tcp_path), "/proc/%s/net/tcp6", pid);
+        }
+
+        f = fopen(tcp_path, "r");
+        if (!f) {
+            continue;
+        }
+
+        if (!fgets(line, sizeof(line), f)) {
+            fclose(f);
+            continue;
+        }
+
+        while (fgets(line, sizeof(line), f)) {
+            char src_hex[64], dst_hex[64], src_port_hex[16], dst_port_hex[16];
+            char local_addr[128], rem_addr[128], state[8], inode[32];
+            ovs_be16 sport, dport;
+            bool match = false;
+
+            if (!ovs_scan(line,
+                          "%*d: %64s %64s %2s %*s %*s %*s %*s %*s %31s",
+                          local_addr, rem_addr, state, inode)) {
+                continue;
+            }
+
+            if (!ovs_scan(local_addr, "%[^:]:%s", src_hex, src_port_hex) ||
+                !ovs_scan(rem_addr, "%[^:]:%s", dst_hex, dst_port_hex))
+            {
+                continue;
+            }
+
+            sport = hex_to_port(src_port_hex);
+            dport = hex_to_port(dst_port_hex);
+
+            if (af == AF_INET) {
+                struct in_addr proc_src, proc_dst;
+                if (!ip_parse(src_hex, &proc_src.s_addr) ||
+                    !ip_parse(dst_hex, &proc_dst.s_addr)) {
+                    continue;
+                }
+
+                if (proc_src.s_addr == ((struct in_addr *) src)->s_addr &&
+                    proc_dst.s_addr == ((struct in_addr *) dst)->s_addr &&
+                    sport == src_port &&
+                    dport == dst_port) {
+                    match = true;
+                }
+            } else if (af == AF_INET6) {
+                struct in6_addr proc_src6, proc_dst6;
+                if (!ipv6_parse(src_hex, &proc_src6) ||
+                    !ipv6_parse(dst_hex, &proc_dst6)) {
+                    continue;
+                }
+
+                if (ipv6_addr_equals(&proc_src6, (struct in6_addr *) src) &&
+                    ipv6_addr_equals(&proc_dst6, (struct in6_addr *) dst) &&
+                    sport == src_port &&
+                    dport == dst_port) {
+                    match = true;
+                }
+            }
+
+            if (match) {
+                ovs_scan(netns_link, "net:[%"PRIu64"]", netns_out);
+                *inode_out = strtoull(inode, NULL, 10);
+                fclose(f);
+                error = 0;
+                goto out;
+            }
+        }
+
+        fclose(f);
+    }
+
+    closedir(proc_dir);
+
+out:
     return error;
 }
 
@@ -3957,6 +4159,7 @@ exit:
     .get_next_hop = netdev_linux_get_next_hop,                  \
     .arp_lookup = netdev_linux_arp_lookup,                      \
     .get_target_ns = netdev_linux_get_target_ns,                \
+    .get_socket_inode = netdev_linux_get_socket_inode,          \
     .update_flags = netdev_linux_update_flags,                  \
     .rxq_alloc = netdev_linux_rxq_alloc,                        \
     .rxq_dealloc = netdev_linux_rxq_dealloc,                    \

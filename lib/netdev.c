@@ -57,6 +57,7 @@
 #include "svec.h"
 #include "openvswitch/vlog.h"
 #include "flow.h"
+#include "unixctl.h"
 #include "userspace-tso.h"
 #include "util.h"
 #ifdef __linux__
@@ -107,6 +108,7 @@ struct netdev_registered_class {
  * additional log messages. */
 static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 20);
 
+static void netdev_register_commands(void);
 static void restore_all_flags(void *aux OVS_UNUSED);
 void update_device_args(struct netdev *, const struct shash *args);
 #ifdef HAVE_AF_XDP
@@ -170,6 +172,7 @@ netdev_initialize(void)
         netdev_register_provider(&netdev_internal_class);
         netdev_vport_tunnel_register();
 #endif
+        netdev_register_commands();
         ovsthread_once_done(&once);
     }
 }
@@ -1671,6 +1674,22 @@ netdev_get_target_ns(const struct netdev *netdev, int *target_ns)
             : EOPNOTSUPP);
 }
 
+/* Retreives a socket inode from the target netns for 'netdev'.  On
+ * success, stores the socket inode detail in the 'inode_out' variable.
+ * Uses 'af' to determine 'src'/'dst' size. */
+int
+netdev_get_socket_inode(const struct netdev *netdev, int proto, int af,
+                        const void *src, ovs_be16 sport,
+                        const void *dst, ovs_be16 dport,
+                        uint64_t *inode_out, uint64_t *netns_out)
+{
+    return (netdev->netdev_class->get_socket_inode
+            ? netdev->netdev_class->get_socket_inode(netdev, proto, af,
+                                                     src, sport, dst, dport,
+                                                     inode_out, netns_out)
+            : EOPNOTSUPP);
+}
+
 /* Returns true if carrier is active (link light is on) on 'netdev'. */
 bool
 netdev_get_carrier(const struct netdev *netdev)
@@ -2438,4 +2457,82 @@ netdev_free_custom_stats_counters(struct netdev_custom_stats *custom_stats)
             custom_stats->size = 0;
         }
     }
+}
+
+
+
+static void
+netdev_v4_socket_inode_find(struct unixctl_conn *conn, int argc OVS_UNUSED,
+                            const char *argv[], void *aux OVS_UNUSED)
+{
+    struct netdev *netdev = netdev_from_name(argv[1]);
+    struct ds s = DS_EMPTY_INITIALIZER;
+    ovs_be32 saddr, daddr;
+    ovs_be16 sport, dport;
+    struct in_addr sa, da;
+    uint64_t inode, ns;
+    int proto;
+    int error;
+
+    if (!netdev) {
+        error = ESRCH;
+        ds_put_format(&s, "No such device: %s", argv[1]);
+        goto out;
+    }
+
+    if (!strcmp(argv[2], "tcp")) {
+        proto = IPPROTO_TCP;
+    } else if (!strcmp(argv[2], "udp")) {
+        proto = IPPROTO_UDP;
+    } else {
+        error = EINVAL;
+        ds_put_format(&s, "Invalid proto: %s vs. tcp/udp", argv[2]);
+        goto out;
+    }
+
+    if (ip_parse_port(argv[3], &saddr, &sport)) {
+        error = EINVAL;
+        ds_put_format(&s, "Invalid source ip:port format: %s", argv[3]);
+        goto out;
+    }
+
+    if (ip_parse_port(argv[4], &daddr, &dport)) {
+        error = EINVAL;
+        ds_put_format(&s, "Invalid dest ip:port format: %s", argv[4]);
+        goto out;
+    }
+
+    ds_put_format(&s, "Scanning for: ip:%08X -> %08X, port:%04X -> %08X\n",
+                  saddr, daddr, sport, dport);
+    sa.s_addr = saddr;
+    da.s_addr = daddr;
+
+    error = netdev_get_socket_inode(netdev, proto, AF_INET,
+                                    &sa, sport, &da, dport,
+                                    &inode, &ns);
+
+    if (!error) {
+        ds_put_format(&s, "Inode: %" PRIu64 ", netns: %"PRIu64, inode, ns);
+    } else {
+        ds_put_format(&s, "Inode lookup error: %s", ovs_strerror(error));
+    }
+
+out:
+    if (!error) {
+        unixctl_command_reply(conn, ds_cstr(&s));
+    } else {
+        unixctl_command_reply_error(conn, ds_cstr(&s));
+    }
+
+    ds_destroy(&s);
+    netdev_close(netdev);
+}
+
+static void
+netdev_register_commands(void)
+{
+    unixctl_command_register("netdev/lookup-v4-sock",
+                             "[netdev] [proto] [src:port] [dst:port]",
+                             4, 4,
+                             netdev_v4_socket_inode_find, NULL);
 }

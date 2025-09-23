@@ -784,6 +784,19 @@ struct netdev_class {
      * anyhow. */
     int (*get_target_ns)(const struct netdev *netdev, int *target_ns);
 
+    /* Retreives a socket inode from the target netns for 'netdev'.  On
+     * success, stores the socket inode detail in the 'inode_out' variable.
+     * Uses 'af' to determine 'src'/'dst' size.
+     *
+     * This function may be set to null if it would always return EOPNOTSUPP
+     * anyhow. */
+    int (*get_socket_inode)(const struct netdev *netdev, int proto, int af,
+                            const void *src,
+                            ovs_be16 sport,
+                            const void *dst,
+                            ovs_be16 dport,
+                            uint64_t *inode_out, uint64_t *netns_out);
+
     /* Retrieves the current set of flags on 'netdev' into '*old_flags'.  Then,
      * turns off the flags that are set to 1 in 'off' and turns on the flags
      * that are set to 1 in 'on'.  (No bit will be set to 1 in both 'off' and

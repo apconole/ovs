@@ -3,6 +3,9 @@ Post-v3.6.0
    - Userspace datapath:
      * Conntrack now supports the FTP commands EPSV and EPRT with IPv4
        connections, instead of limiting these commands to IPv6 only.
+   - Netlink:
+     * Introduce a new appctl command 'netdev/lookup-v4-sock' that will
+       attempt to look up a socket inode and netns details.
 
 
 v3.6.0 - 18 Aug 2025

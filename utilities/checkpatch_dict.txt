@@ -218,6 +218,7 @@ ppid
 pps
 pre
 prio
+procfs
 promisc
 qdisc
 qos
