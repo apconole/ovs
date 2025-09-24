@@ -6,6 +6,9 @@ Post-v3.6.0
    - Netlink:
      * Introduce a new appctl command 'netdev/lookup-v4-sock' that will
        attempt to look up a socket inode and netns details.
+   - Linux datapath:
+     * Add the 'socket-offload' option to interfaces to enable lookups
+       of sockets for direct packet forwarding in the netlink datapath.
 
 
 v3.6.0 - 18 Aug 2025

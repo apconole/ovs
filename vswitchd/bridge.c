@@ -1068,6 +1068,18 @@ iface_set_netdev_mtu(const struct ovsrec_interface *iface_cfg,
     return 0;
 }
 
+/* Configures the socket-offload of 'netdev' based on the
+ * "other_config:socket-offload" column in 'iface_cfg'. */
+static int
+iface_set_netdev_socket_offload(const struct ovsrec_interface *iface_cfg,
+                                struct netdev *netdev)
+{
+    bool s = smap_get_bool(&iface_cfg->other_config, "socket-offload",
+                           false);
+    int error = netdev_set_socket_lookup_enabled(netdev, s);
+    return error;
+}
+
 static void
 bridge_delete_or_reconfigure_ports(struct bridge *br)
 {
@@ -1125,6 +1137,7 @@ bridge_delete_or_reconfigure_ports(struct bridge *br)
         }
 
         iface_set_netdev_mtu(iface->cfg, iface->netdev);
+        iface_set_netdev_socket_offload(iface->cfg, iface->netdev);
 
         /* If the requested OpenFlow port for 'iface' changed, and it's not
          * already the correct port, then we might want to temporarily delete
@@ -2198,6 +2211,7 @@ iface_do_create(const struct bridge *br,
     }
 
     iface_set_netdev_mtu(iface_cfg, netdev);
+    iface_set_netdev_socket_offload(iface_cfg, netdev);
 
     *ofp_portp = iface_pick_ofport(iface_cfg);
     error = ofproto_port_add(br->ofproto, netdev, ofp_portp);
