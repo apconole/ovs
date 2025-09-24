@@ -302,6 +302,8 @@ int netdev_arp_lookup(const struct netdev *, ovs_be32 ip,
 
 int netdev_get_target_ns(const struct netdev *, int *target_ns);
 
+int netdev_set_socket_lookup_enabled(struct netdev *, bool enabled);
+bool netdev_get_socket_lookup_enabled(const struct netdev *);
 int netdev_get_socket_inode(const struct netdev *, int proto, int af,
                             const void *src, ovs_be16 sport,
                             const void *dst, ovs_be16 dport,

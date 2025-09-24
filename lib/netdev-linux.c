@@ -957,6 +957,7 @@ netdev_linux_common_construct(struct netdev *netdev_)
 
     /* The device could be in the same network namespace or in another one. */
     netnsid_unset(&netdev->netnsid);
+    netdev->socket_lookup_enabled = false;
     ovs_mutex_init(&netdev->mutex);
 
     return 0;
@@ -4045,6 +4046,31 @@ out:
     return error;
 }
 
+static int
+netdev_linux_set_socket_lookup_enabled(struct netdev *netdev_, bool enabled)
+{
+    struct netdev_linux *netdev = netdev_linux_cast(netdev_);
+
+    ovs_mutex_lock(&netdev->mutex);
+    netdev->socket_lookup_enabled = enabled;
+    ovs_mutex_unlock(&netdev->mutex);
+
+    return 0;
+}
+
+static bool
+netdev_linux_get_socket_lookup_enabled(const struct netdev *netdev_)
+{
+    struct netdev_linux *netdev = netdev_linux_cast(netdev_);
+    bool enabled;
+
+    ovs_mutex_lock(&netdev->mutex);
+    enabled = netdev->socket_lookup_enabled;
+    ovs_mutex_unlock(&netdev->mutex);
+
+    return enabled;
+}
+
 static unsigned int
 nd_to_iff_flags(enum netdev_flags nd)
 {
@@ -4159,6 +4185,8 @@ exit:
     .get_next_hop = netdev_linux_get_next_hop,                  \
     .arp_lookup = netdev_linux_arp_lookup,                      \
     .get_target_ns = netdev_linux_get_target_ns,                \
+    .set_socket_lookup_enabled = netdev_linux_set_socket_lookup_enabled, \
+    .get_socket_lookup_enabled = netdev_linux_get_socket_lookup_enabled, \
     .get_socket_inode = netdev_linux_get_socket_inode,          \
     .update_flags = netdev_linux_update_flags,                  \
     .rxq_alloc = netdev_linux_rxq_alloc,                        \

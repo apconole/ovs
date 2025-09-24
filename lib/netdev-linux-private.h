@@ -69,6 +69,7 @@ struct netdev_linux {
     struct timer miimon_timer;
 
     int netnsid;                    /* Network namespace ID. */
+    bool socket_lookup_enabled;    /* Socket lookup functionality enabled. */
     /* The following are figured out "on demand" only.  They are only valid
      * when the corresponding VALID_* bit in 'cache_valid' is set. */
     int ifindex;

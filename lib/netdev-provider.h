@@ -784,6 +784,19 @@ struct netdev_class {
      * anyhow. */
     int (*get_target_ns)(const struct netdev *netdev, int *target_ns);
 
+    /* Enables or disables socket lookup functionality for 'netdev'.
+     * When enabled, allows socket inode lookups via get_socket_inode.
+     *
+     * This function may be set to null if it would always return EOPNOTSUPP
+     * anyhow. */
+    int (*set_socket_lookup_enabled)(struct netdev *netdev, bool enabled);
+
+    /* Returns whether socket lookup functionality is enabled for 'netdev'.
+     * Returns false if socket lookup is not supported or disabled.
+     *
+     * This function may be set to null, in which case it defaults to false. */
+    bool (*get_socket_lookup_enabled)(const struct netdev *netdev);
+
     /* Retreives a socket inode from the target netns for 'netdev'.  On
      * success, stores the socket inode detail in the 'inode_out' variable.
      * Uses 'af' to determine 'src'/'dst' size.
