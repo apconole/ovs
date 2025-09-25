@@ -1655,6 +1655,45 @@ check_psample(struct dpif_backer *backer)
     return supported;
 }
 
+/* Tests whether 'backer''s datapath supports the
+ * OVS_ACTION_ATTR_SOCKET action. */
+static bool
+check_socket_action(struct dpif_backer *backer)
+{
+    struct odputil_keybuf keybuf;
+    struct ofpbuf actions;
+    struct ofpbuf key;
+    struct flow flow;
+    bool supported;
+
+    struct odp_flow_key_parms odp_parms = {
+        .flow = &flow,
+        .probe = true,
+    };
+
+    memset(&flow, 0, sizeof flow);
+    ofpbuf_use_stack(&key, &keybuf, sizeof keybuf);
+    odp_flow_key_from_flow(&odp_parms, &key);
+    ofpbuf_init(&actions, 64);
+    size_t sock_start;
+
+    sock_start = nl_msg_start_nested(&actions, OVS_ACTION_ATTR_SOCKET);
+    /* -1 as the netns ID and inode */
+    nl_msg_put_u32(&actions, OVS_SOCKET_ACTION_ATTR_NETNS_ID, 0xffffffff);
+    nl_msg_put_u64(&actions, OVS_SOCKET_ACTION_ATTR_INODE, ~0ULL);
+
+    nl_msg_put_flag(&actions, OVS_SOCKET_ACTION_ATTR_ACTIONS);
+    nl_msg_end_nested(&actions, sock_start);
+
+    supported = dpif_probe_feature(backer->dpif, "socket_action", &key,
+                                   &actions, NULL);
+    ofpbuf_uninit(&actions);
+    VLOG_INFO("%s: Datapath %s socket_action action",
+              dpif_name(backer->dpif), supported ? "supports"
+              : "does not support");
+    return supported;
+}
+
 #define CHECK_FEATURE__(NAME, SUPPORT, FIELD, VALUE, ETHTYPE)               \
 static bool                                                                 \
 check_##NAME(struct dpif_backer *backer)                                    \
@@ -1745,6 +1784,7 @@ check_support(struct dpif_backer *backer)
     backer->rt_support.ct_zero_snat = dpif_supports_ct_zero_snat(backer);
     backer->rt_support.add_mpls = check_add_mpls(backer);
     backer->rt_support.psample = check_psample(backer);
+    backer->rt_support.socket = check_socket_action(backer);
 
     /* Flow fields. */
     backer->rt_support.odp.ct_state = check_ct_state(backer);

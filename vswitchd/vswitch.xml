@@ -6523,6 +6523,13 @@ ovs-vsctl add-port br0 p0 -- set Interface p0 type=patch options:peer=p1 \
         True if the datapath supports OVS_ACTION_ATTR_PSAMPLE.  If false,
         local sampling will not be supported with the Linux kernel datapath.
       </column>
+      <column name="capabilities" key="socket_action"
+              type='{"type": "boolean"}'>
+        True if the datapath supports OVS_ACTION_ATTR_SOCKET.  If true,
+        Open vSwitch will attempt to use the <code>socket</code> action
+        when sending packets through the Open vSwitch datapath, which will
+        shortcut datapath flows.
+      </column>
     </group>
 
     <column name="ct_zone_default_limit">
