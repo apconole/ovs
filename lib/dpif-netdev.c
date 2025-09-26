@@ -9186,6 +9186,29 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
     uint32_t packet_count, packets_dropped;
 
     switch ((enum ovs_action_attr)type) {
+    case OVS_ACTION_ATTR_SOCKET: {
+        /* Since socket isn't supported, but there's a fallback branch, we will
+         * execute the fallback side of the socket call.  In the future, it
+         * may be feasible to implement via an AF_XDP type socket. */
+        static const struct nl_policy ovs_sock_act_policy[] = {
+            [OVS_SOCKET_ACTION_ATTR_NETNS_ID] = { .type = NL_A_U32 },
+            [OVS_SOCKET_ACTION_ATTR_INODE]    = { .type = NL_A_U64 },
+            [OVS_SOCKET_ACTION_ATTR_ACTIONS]  = { .type = NL_A_NESTED },
+        };
+        struct nlattr *sock_act[ARRAY_SIZE(ovs_sock_act_policy)];
+        if (!nl_parse_nested(a, ovs_sock_act_policy, sock_act,
+                             ARRAY_SIZE(sock_act))) {
+            VLOG_ERR("Unable to parse socket type.");
+            return;
+        }
+
+        struct nlattr *acts = sock_act[OVS_SOCKET_ACTION_ATTR_ACTIONS];
+        dp_netdev_execute_actions(aux->pmd, packets_, should_steal,
+                                  aux->flow, nl_attr_get(acts),
+                                  nl_attr_get_size(acts));
+        return;
+    }
+
     case OVS_ACTION_ATTR_OUTPUT:
         dp_execute_output_action(pmd, packets_, should_steal,
                                  nl_attr_get_odp_port(a));
@@ -9495,7 +9518,6 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
     case OVS_ACTION_ATTR_ADD_MPLS:
     case OVS_ACTION_ATTR_DEC_TTL:
     case OVS_ACTION_ATTR_PSAMPLE:
-    case OVS_ACTION_ATTR_SOCKET:
     case __OVS_ACTION_ATTR_MAX:
         OVS_NOT_REACHED();
     }

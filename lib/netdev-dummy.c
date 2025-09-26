@@ -174,6 +174,9 @@ struct netdev_dummy {
 
     /* Set the segment size for netdev TSO support. */
     int ol_tso_segsz OVS_GUARDED;
+
+    /* Socket lookup functionality state. */
+    bool socket_lookup_enabled OVS_GUARDED;
 };
 
 /* Max 'recv_queue_len' in struct netdev_dummy. */
@@ -739,6 +742,7 @@ netdev_dummy_construct(struct netdev *netdev_)
     netdev->requested_n_rxq = netdev_->n_rxq;
     netdev->requested_n_txq = netdev_->n_txq;
     netdev->numa_id = 0;
+    netdev->socket_lookup_enabled = false;
 
     memset(&netdev->custom_stats, 0, sizeof(netdev->custom_stats));
 
@@ -1796,6 +1800,71 @@ exit:
     return error ? -1 : 0;
 }
 
+static int
+netdev_dummy_get_target_ns(const struct netdev *netdev OVS_UNUSED,
+                           int *target_ns)
+{
+    /* For dummy devices, return a fixed hash value instead of real
+     * namespace ID. */
+    *target_ns = 0x12345678;
+    return 0;
+}
+
+static int
+netdev_dummy_set_socket_lookup_enabled(struct netdev *netdev_, bool enabled)
+{
+    struct netdev_dummy *netdev = netdev_dummy_cast(netdev_);
+
+    ovs_mutex_lock(&netdev->mutex);
+    netdev->socket_lookup_enabled = enabled;
+    ovs_mutex_unlock(&netdev->mutex);
+
+    return 0;
+}
+
+static bool
+netdev_dummy_get_socket_lookup_enabled(const struct netdev *netdev_)
+{
+    struct netdev_dummy *netdev = netdev_dummy_cast(netdev_);
+    bool enabled;
+
+    ovs_mutex_lock(&netdev->mutex);
+    enabled = netdev->socket_lookup_enabled;
+    ovs_mutex_unlock(&netdev->mutex);
+
+    return enabled;
+}
+
+static int
+netdev_dummy_get_socket_inode(const struct netdev *netdev OVS_UNUSED,
+                              int proto, int af,
+                              const void *src,
+                              ovs_be16 sport,
+                              const void *dst,
+                              ovs_be16 dport,
+                              uint64_t *inode_out, uint64_t *netns_out)
+{
+    /* For dummy devices, return hashed values instead of real inode/netns */
+    if (proto != IPPROTO_TCP) {
+        return ENOENT;
+    }
+
+    if (af == AF_INET) {
+        uint64_t inode_hash = hash_2words(*(uint32_t *) src,
+                                          *(uint32_t *) dst);
+        inode_hash = inode_hash << 32;
+        inode_hash |=
+            ((OVS_FORCE uint16_t) sport << 16) |
+            ((OVS_FORCE uint16_t) dport);
+
+        *inode_out = inode_hash;
+        *netns_out = 0x12345678;
+    } else {
+        return ENOENT;
+    }
+    return 0;
+}
+
 #define NETDEV_DUMMY_CLASS_COMMON                       \
     .run = netdev_dummy_run,                            \
     .wait = netdev_dummy_wait,                          \
@@ -1822,6 +1891,10 @@ exit:
     .dump_queue_stats = netdev_dummy_dump_queue_stats,  \
     .get_addr_list = netdev_dummy_get_addr_list,        \
     .update_flags = netdev_dummy_update_flags,          \
+    .get_target_ns = netdev_dummy_get_target_ns,        \
+    .set_socket_lookup_enabled = netdev_dummy_set_socket_lookup_enabled, \
+    .get_socket_lookup_enabled = netdev_dummy_get_socket_lookup_enabled, \
+    .get_socket_inode = netdev_dummy_get_socket_inode,  \
     .rxq_alloc = netdev_dummy_rxq_alloc,                \
     .rxq_construct = netdev_dummy_rxq_construct,        \
     .rxq_destruct = netdev_dummy_rxq_destruct,          \

@@ -4456,6 +4456,146 @@ terminate_native_tunnel(struct xlate_ctx *ctx, const struct xport *xport,
     return *tnl_port != ODPP_NONE;
 }
 
+static bool should_track_socket_flows(struct xlate_ctx *ctx,
+                                      const struct xport *xport)
+{
+    struct flow *flow = &ctx->xin->flow;
+
+    /* Only for valid ports (also need to check the addresses involved). */
+    return ((xport && xport->netdev &&
+             netdev_get_socket_lookup_enabled(xport->netdev)) &&
+            (flow->dl_type == htons(ETH_TYPE_IP) ||
+             flow->dl_type == htons(ETH_TYPE_IPV6)) &&
+            (flow->nw_proto == IPPROTO_TCP) &&
+            (flow->tp_src && flow->tp_dst));
+}
+
+static void
+unwildcard_socket_flow(struct xlate_ctx *ctx)
+{
+    struct flow_wildcards *wc = ctx->wc;
+    struct flow *flow = &ctx->xin->flow;
+
+    /* Protocol and TCP ports are common */
+    memset(&wc->masks.nw_proto, 0xff, sizeof wc->masks.nw_proto);
+    memset(&wc->masks.tp_src, 0xff, sizeof wc->masks.tp_src);
+    memset(&wc->masks.tp_dst, 0xff, sizeof wc->masks.tp_dst);
+
+    /* IP address fields */
+    if (flow->dl_type == htons(ETH_TYPE_IP)) {
+        /* IPv4 */
+        wc->masks.nw_src = OVS_BE32_MAX;
+        wc->masks.nw_dst = OVS_BE32_MAX;
+    } else if (flow->dl_type == htons(ETH_TYPE_IPV6)) {
+        /* IPv6 */
+        memset(&wc->masks.ipv6_src, 0xff, sizeof wc->masks.ipv6_src);
+        memset(&wc->masks.ipv6_dst, 0xff, sizeof wc->masks.ipv6_dst);
+    }
+
+    /* Eth fields. */
+    memset(&wc->masks.dl_type, 0xff, sizeof wc->masks.dl_type);
+    memset(&wc->masks.dl_src, 0xff, ETH_ADDR_LEN);
+    memset(&wc->masks.dl_dst, 0xff, ETH_ADDR_LEN);
+}
+
+static void
+compose_socket_action_with_fallback(struct ofpbuf *actions, uint32_t netns,
+                                    uint64_t inode, uint32_t recirc_id)
+{
+    size_t socket_offset, actions_offset;
+
+    socket_offset = nl_msg_start_nested(actions, OVS_ACTION_ATTR_SOCKET);
+    nl_msg_put_u32(actions, OVS_SOCKET_ACTION_ATTR_NETNS_ID, netns);
+    nl_msg_put_u64(actions, OVS_SOCKET_ACTION_ATTR_INODE, inode);
+    actions_offset = nl_msg_start_nested(actions,
+                                         OVS_SOCKET_ACTION_ATTR_ACTIONS);
+    nl_msg_put_u32(actions, OVS_ACTION_ATTR_RECIRC, recirc_id);
+    nl_msg_end_nested(actions, actions_offset);
+    nl_msg_end_nested(actions, socket_offset);
+}
+
+static void
+generate_and_compose_socket_action(struct xlate_ctx *ctx,
+                                   struct netdev *netdev, uint32_t recirc_id)
+{
+    struct flow flow = ctx->base_flow; /* make a copy of the flow. */
+    int af = (flow.dl_type == htons(ETH_TYPE_IP)) ? AF_INET : AF_INET6;
+    uint64_t netns, inode;
+    int error;
+
+    if (af == AF_INET) {
+        error = netdev_get_socket_inode(netdev, flow.nw_proto, af,
+                                       &flow.nw_src, flow.tp_src,
+                                       &flow.nw_dst, flow.tp_dst,
+                                       &inode, &netns);
+    } else {
+        error = netdev_get_socket_inode(netdev, flow.nw_proto, af,
+                                       &flow.ipv6_src, flow.tp_src,
+                                       &flow.ipv6_dst, flow.tp_dst,
+                                       &inode, &netns);
+    }
+
+    if (error) {
+        VLOG_DBG("Socket lookup failed for flow: %s", ovs_strerror(error));
+        return;
+    }
+
+    if (ctx->conntracked) {
+        ctx->base_flow.tp_src = ctx->base_flow.ct_tp_src;
+        ctx->base_flow.tp_dst = ctx->base_flow.ct_tp_dst;
+
+        if (af == AF_INET) {
+            ctx->base_flow.nw_src = ctx->base_flow.ct_nw_src;
+            ctx->base_flow.nw_dst = ctx->base_flow.ct_nw_dst;
+        } else {
+            memcpy(&ctx->base_flow.ipv6_src, &ctx->base_flow.ct_ipv6_src,
+                   sizeof(ctx->base_flow.ipv6_src));
+            memcpy(&ctx->base_flow.ipv6_dst, &ctx->base_flow.ct_ipv6_dst,
+                   sizeof(ctx->base_flow.ipv6_dst));
+        }
+    }
+
+    /* Build flow key */
+    compose_socket_action_with_fallback(ctx->odp_actions, netns, inode,
+                                        recirc_id);
+}
+
+static void
+xlate_socket_action(struct xlate_ctx *ctx, const struct xport *xport,
+                    bool is_last_action OVS_UNUSED)
+{
+    struct frozen_state state = {
+        .table_id = ctx->table_id,
+        .ofproto_uuid = ctx->xbridge->ofproto->uuid,
+        .stack = ctx->stack.data,
+        .stack_size = ctx->stack.size,
+        .mirrors = ctx->mirrors,
+        .conntracked = ctx->conntracked,
+        .was_mpls = ctx->was_mpls,
+        .ofpacts = NULL,
+        .ofpacts_len = 0,
+        .action_set = NULL,
+        .action_set_len = 0,
+        .userdata = ctx->pause ? CONST_CAST(uint8_t *,ctx->pause->userdata)
+                               : NULL,
+        .userdata_len = ctx->pause ? ctx->pause->userdata_len : 0,
+    };
+    frozen_metadata_from_flow(&state.metadata, &ctx->xin->flow);
+    state.socket_attempt = true;
+
+    /* Allocate the fallback recirc ID, and update the state. */
+    uint32_t recirc_id = recirc_alloc_id_ctx(&state);
+    if (!recirc_id) {
+        xlate_report_error(ctx, "Failed to allocate recirculation id");
+        ctx->error = XLATE_NO_RECIRCULATION_CONTEXT;
+        return;
+    }
+    recirc_refs_add(&ctx->xout->recircs, recirc_id);
+
+    unwildcard_socket_flow(ctx);
+    generate_and_compose_socket_action(ctx, xport->netdev, recirc_id);
+}
+
 static void
 compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
                         const struct xlate_bond_recirc *xr, bool check_stp,
@@ -4562,6 +4702,17 @@ compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
     if (out_port != ODPP_NONE) {
         /* Commit accumulated flow updates before output. */
         xlate_commit_actions(ctx);
+
+        /* Check if we should enable socket flow tracking for this port */
+        if ((!ctx->xin->frozen_state ||
+             !ctx->xin->frozen_state->socket_attempt) &&
+            should_track_socket_flows(ctx, xport)) {
+            xlate_report(ctx, OFT_DETAIL,
+                         "Socket flow tracking enabled for port %d", ofp_port);
+            /* Compose the action. */
+            xlate_socket_action(ctx, xport, is_last_action);
+            return;
+        }
 
         if (xr && bond_use_lb_output_action(xport->xbundle->bond)) {
             /*
@@ -8712,6 +8863,8 @@ xlate_resume(struct ofproto_dpif *ofproto,
         .mirrors = pin->mirrors,
         .conntracked = pin->conntracked,
         .xport_uuid = UUID_ZERO,
+        .socket_attempt = true, /* After a pin message ignore socket()
+                                 * calls (for now).*/
 
         /* When there are no actions, xlate_actions() will search the flow
          * table.  We don't want it to do that (we want it to resume), so

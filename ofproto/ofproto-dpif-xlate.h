@@ -65,6 +65,12 @@ struct xlate_out {
     /* Keep track of the last action whose purpose is purely observational.
      * e.g: IPFIX, sFlow, local sampling. */
     uint32_t last_observe_offset;
+
+    /* Let's the upcall handler know that a socket action should be used
+     * along with any output action. */
+    bool use_socket_action;
+    const struct netdev *socket_outport;
+    uint32_t socket_recirc_id;
 };
 
 struct xlate_in {
@@ -243,6 +249,9 @@ bool xlate_delete_static_mac_entry(const struct ofproto_dpif *,
 
 void xlate_set_support(const struct ofproto_dpif *,
                        const struct dpif_backer_support *);
+
+bool xlate_socket_flow_revalidation(const struct flow *,
+                                    const struct xlate_out *);
 
 void xlate_txn_start(void);
 void xlate_txn_commit(void);
