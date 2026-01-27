@@ -353,6 +353,90 @@ jobs:
         name: logs-linux-${{ join(matrix.*, '-') }}
         path: logs.tgz
 
+  build-coverage:
+    env:
+      dependencies: |
+        automake libtool gcc libssl-dev libunbound-dev libunwind-dev lcov
+      CC: gcc
+    name: coverage
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+
+    steps:
+    - name: checkout
+      uses: actions/checkout@v4
+
+    - name: update PATH
+      run: |
+        echo "$HOME/bin"        >> $GITHUB_PATH
+        echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+    - name: set up python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ env.python_default }}
+
+    - name: update APT cache
+      run: sudo apt update || true
+
+    - name: install dependencies
+      run: sudo apt install -y ${{ env.dependencies }}
+
+    - name: prepare
+      run: ./.ci/linux-prepare.sh
+
+    - name: configure with coverage
+      run: |
+        # Enabling coverage should automatically remove the -O2, so explicitly
+        # add the -g -O0
+        ./boot.sh
+        ./configure --enable-coverage CFLAGS="-g -O0"
+
+    - name: build
+      run: make -j$(nproc)
+
+    - name: run tests with coverage
+      run: make check-lcov TESTSUITEFLAGS="-j$(nproc)" RECHECK=yes
+
+    - name: generate coverage summary
+      run: |
+        # Extract coverage summary for GitHub Actions
+        SUMMARY=$(lcov --summary tests/lcov/coverage.info 2>&1)
+        LINES=$(echo "$SUMMARY" | grep 'lines' | sed 's/.*: //' | cut -d' ' -f1)
+        FUNCTIONS=$(echo "$SUMMARY" | grep 'functions' | sed 's/.*: //' | cut -d' ' -f1)
+        BRANCHES=$(echo "$SUMMARY" | grep 'branches' | sed 's/.*: //' | cut -d' ' -f1)
+
+        echo "## Code Coverage Report" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "| Metric | Coverage |" >> $GITHUB_STEP_SUMMARY
+        echo "|--------|----------|" >> $GITHUB_STEP_SUMMARY
+        echo "| Lines | ${LINES:-N/A} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Functions | ${FUNCTIONS:-N/A} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Branches | ${BRANCHES:-N/A} |" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "Download the coverage artifact below to view the full HTML report." >> $GITHUB_STEP_SUMMARY
+
+    - name: upload coverage report
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-report
+        path: tests/lcov/
+
+    - name: copy logs on failure
+      if: failure() || cancelled()
+      run: |
+        mkdir logs
+        cp config.log ./logs/ || true
+        cp -r ./tests/testsuite.* ./logs/ || true
+        sudo tar -czvf logs.tgz logs/
+
+    - name: upload logs on failure
+      if: failure() || cancelled()
+      uses: actions/upload-artifact@v4
+      with:
+        name: logs-coverage
+        path: logs.tgz
+
   build-clang-analyze-cache:
     needs: build-dpdk
     env:

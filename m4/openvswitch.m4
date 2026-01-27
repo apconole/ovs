@@ -42,8 +42,8 @@ AC_DEFUN([OVS_CHECK_COVERAGE],
         esac
      done
 
-     OVS_CFLAGS="$OVS_CFLAGS --coverage"
-     OVS_LDFLAGS="$OVS_LDFLAGS --coverage"
+     OVS_CFLAGS="$OVS_CFLAGS --coverage -fprofile-update=atomic"
+     OVS_LDFLAGS="$OVS_LDFLAGS --coverage -fprofile-update=atomic"
    fi])
 
 dnl Checks for --enable-ndebug and defines NDEBUG if it is specified.
