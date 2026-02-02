@@ -22,7 +22,9 @@
 #include <stdint.h>
 
 #include "flow.h"
+#include "openvswitch/list.h"
 
+struct dpif;
 struct ofpbuf;
 
 struct dpif_netlink_vport {
@@ -61,5 +63,27 @@ int dpif_netlink_vport_get(const char *name, struct dpif_netlink_vport *reply,
 bool dpif_netlink_is_internal_device(const char *name);
 
 enum ovs_vport_type netdev_to_ovs_vport_type(const char *type);
+
+/* Socket map operations. */
+struct dpif_netlink_skmap_entry {
+    uint32_t key_type;
+    ovs_be32 ipv4_src;
+    ovs_be32 ipv4_dst;
+    ovs_be16 tp_src;
+    ovs_be16 tp_dst;
+    uint8_t protocol;
+    uint8_t sock_state;
+
+    struct ovs_list node;       /* For linking into a list. */
+};
+
+int dpif_netlink_get_dp_ifindex(const struct dpif *);
+int dpif_netlink_skmap_dump(int dp_ifindex, struct ovs_list *entries);
+int dpif_netlink_skmap_get(int dp_ifindex,
+                           const struct dpif_netlink_skmap_entry *query,
+                           struct dpif_netlink_skmap_entry *reply);
+int dpif_netlink_skmap_del(int dp_ifindex,
+                           const struct dpif_netlink_skmap_entry *entry);
+void dpif_netlink_skmap_entries_free(struct ovs_list *entries);
 
 #endif /* dpif-netlink.h */

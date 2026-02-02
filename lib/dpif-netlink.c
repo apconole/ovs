@@ -245,6 +245,7 @@ static int ovs_flow_family;
 static int ovs_packet_family;
 static int ovs_meter_family;
 static int ovs_ct_limit_family;
+static int ovs_skmap_family;
 
 /* Generic Netlink multicast groups for OVS.
  *
@@ -318,6 +319,16 @@ dpif_netlink_cast(const struct dpif *dpif)
 {
     dpif_assert_class(dpif, &dpif_netlink_class);
     return CONTAINER_OF(dpif, struct dpif_netlink, dpif);
+}
+
+int
+dpif_netlink_get_dp_ifindex(const struct dpif *dpif_)
+{
+    if (dpif_->dpif_class != &dpif_netlink_class) {
+        return 0;
+    }
+    const struct dpif_netlink *dpif = dpif_netlink_cast(dpif_);
+    return dpif->dp_ifindex;
 }
 
 static inline bool
@@ -3055,6 +3066,175 @@ dpif_netlink_ct_del_limits(struct dpif *dpif OVS_UNUSED,
     return err;
 }
 
+/* Socket map operations. */
+
+static int
+dpif_netlink_skmap_from_ofpbuf(struct dpif_netlink_skmap_entry *entry,
+                               const struct ofpbuf *buf)
+{
+    static const struct nl_policy ovs_skmap_policy[] = {
+        [OVS_SKMAP_ATTR_KEY_TYPE] = { .type = NL_A_U32, .optional = true },
+        [OVS_SKMAP_ATTR_IPV4_SRC] = { .type = NL_A_BE32, .optional = true },
+        [OVS_SKMAP_ATTR_IPV4_DST] = { .type = NL_A_BE32, .optional = true },
+        [OVS_SKMAP_ATTR_TP_SRC] = { .type = NL_A_BE16, .optional = true },
+        [OVS_SKMAP_ATTR_TP_DST] = { .type = NL_A_BE16, .optional = true },
+        [OVS_SKMAP_ATTR_PROTOCOL] = { .type = NL_A_U8, .optional = true },
+        [OVS_SKMAP_ATTR_SOCK_STATE] = { .type = NL_A_U8, .optional = true },
+    };
+
+    struct ofpbuf b = ofpbuf_const_initializer(buf->data, buf->size);
+    struct nlmsghdr *nlmsg = ofpbuf_try_pull(&b, sizeof *nlmsg);
+    struct genlmsghdr *genl = ofpbuf_try_pull(&b, sizeof *genl);
+    struct ovs_header *ovs_header = ofpbuf_try_pull(&b, sizeof *ovs_header);
+
+    struct nlattr *attr[ARRAY_SIZE(ovs_skmap_policy)];
+
+    if (!nlmsg || !genl || !ovs_header
+        || nlmsg->nlmsg_type != ovs_skmap_family
+        || !nl_policy_parse(&b, 0, ovs_skmap_policy, attr,
+                            ARRAY_SIZE(ovs_skmap_policy))) {
+        return EINVAL;
+    }
+
+    memset(entry, 0, sizeof *entry);
+
+    if (attr[OVS_SKMAP_ATTR_KEY_TYPE]) {
+        entry->key_type = nl_attr_get_u32(attr[OVS_SKMAP_ATTR_KEY_TYPE]);
+    }
+    if (attr[OVS_SKMAP_ATTR_IPV4_SRC]) {
+        entry->ipv4_src = nl_attr_get_be32(attr[OVS_SKMAP_ATTR_IPV4_SRC]);
+    }
+    if (attr[OVS_SKMAP_ATTR_IPV4_DST]) {
+        entry->ipv4_dst = nl_attr_get_be32(attr[OVS_SKMAP_ATTR_IPV4_DST]);
+    }
+    if (attr[OVS_SKMAP_ATTR_TP_SRC]) {
+        entry->tp_src = nl_attr_get_be16(attr[OVS_SKMAP_ATTR_TP_SRC]);
+    }
+    if (attr[OVS_SKMAP_ATTR_TP_DST]) {
+        entry->tp_dst = nl_attr_get_be16(attr[OVS_SKMAP_ATTR_TP_DST]);
+    }
+    if (attr[OVS_SKMAP_ATTR_PROTOCOL]) {
+        entry->protocol = nl_attr_get_u8(attr[OVS_SKMAP_ATTR_PROTOCOL]);
+    }
+    if (attr[OVS_SKMAP_ATTR_SOCK_STATE]) {
+        entry->sock_state = nl_attr_get_u8(attr[OVS_SKMAP_ATTR_SOCK_STATE]);
+    }
+
+    return 0;
+}
+
+static void
+dpif_netlink_skmap_to_ofpbuf(const struct dpif_netlink_skmap_entry *entry,
+                             int dp_ifindex, uint8_t cmd, struct ofpbuf *buf)
+{
+    struct ovs_header *ovs_header;
+
+    nl_msg_put_genlmsghdr(buf, 0, ovs_skmap_family,
+                          NLM_F_REQUEST | NLM_F_ECHO, cmd,
+                          OVS_SKMAP_VERSION);
+
+    ovs_header = ofpbuf_put_uninit(buf, sizeof *ovs_header);
+    ovs_header->dp_ifindex = dp_ifindex;
+
+    if (entry) {
+        nl_msg_put_u32(buf, OVS_SKMAP_ATTR_KEY_TYPE, entry->key_type);
+        nl_msg_put_be32(buf, OVS_SKMAP_ATTR_IPV4_SRC, entry->ipv4_src);
+        nl_msg_put_be32(buf, OVS_SKMAP_ATTR_IPV4_DST, entry->ipv4_dst);
+        nl_msg_put_be16(buf, OVS_SKMAP_ATTR_TP_SRC, entry->tp_src);
+        nl_msg_put_be16(buf, OVS_SKMAP_ATTR_TP_DST, entry->tp_dst);
+        nl_msg_put_u8(buf, OVS_SKMAP_ATTR_PROTOCOL, entry->protocol);
+    }
+}
+
+int
+dpif_netlink_skmap_dump(int dp_ifindex, struct ovs_list *entries)
+{
+    if (ovs_skmap_family < 0) {
+        return EOPNOTSUPP;
+    }
+
+    struct ofpbuf *request = ofpbuf_new(NL_DUMP_BUFSIZE);
+    nl_msg_put_genlmsghdr(request, 0, ovs_skmap_family,
+                          NLM_F_REQUEST | NLM_F_DUMP, OVS_SKMAP_CMD_GET,
+                          OVS_SKMAP_VERSION);
+
+    struct ovs_header *ovs_header;
+    ovs_header = ofpbuf_put_uninit(request, sizeof *ovs_header);
+    ovs_header->dp_ifindex = dp_ifindex;
+
+    struct nl_dump dump;
+    nl_dump_start(&dump, NETLINK_GENERIC, request);
+    ofpbuf_delete(request);
+
+    struct ofpbuf buf;
+    ofpbuf_init(&buf, NL_DUMP_BUFSIZE);
+
+    struct ofpbuf msg;
+    while (nl_dump_next(&dump, &msg, &buf)) {
+        struct dpif_netlink_skmap_entry *entry = xmalloc(sizeof *entry);
+        if (!dpif_netlink_skmap_from_ofpbuf(entry, &msg)) {
+            ovs_list_push_back(entries, &entry->node);
+        } else {
+            free(entry);
+        }
+    }
+
+    ofpbuf_uninit(&buf);
+    return nl_dump_done(&dump);
+}
+
+int
+dpif_netlink_skmap_get(int dp_ifindex,
+                       const struct dpif_netlink_skmap_entry *query,
+                       struct dpif_netlink_skmap_entry *reply)
+{
+    if (ovs_skmap_family < 0) {
+        return EOPNOTSUPP;
+    }
+
+    struct ofpbuf *request = ofpbuf_new(1024);
+    dpif_netlink_skmap_to_ofpbuf(query, dp_ifindex, OVS_SKMAP_CMD_GET,
+                                 request);
+
+    struct ofpbuf *reply_buf;
+    int err = nl_transact(NETLINK_GENERIC, request, &reply_buf);
+    ofpbuf_delete(request);
+
+    if (!err && reply) {
+        err = dpif_netlink_skmap_from_ofpbuf(reply, reply_buf);
+        ofpbuf_delete(reply_buf);
+    }
+
+    return err;
+}
+
+int
+dpif_netlink_skmap_del(int dp_ifindex,
+                       const struct dpif_netlink_skmap_entry *entry)
+{
+    if (ovs_skmap_family < 0) {
+        return EOPNOTSUPP;
+    }
+
+    struct ofpbuf *request = ofpbuf_new(1024);
+    dpif_netlink_skmap_to_ofpbuf(entry, dp_ifindex, OVS_SKMAP_CMD_DEL,
+                                 request);
+
+    int err = nl_transact(NETLINK_GENERIC, request, NULL);
+    ofpbuf_delete(request);
+    return err;
+}
+
+void
+dpif_netlink_skmap_entries_free(struct ovs_list *entries)
+{
+    struct dpif_netlink_skmap_entry *entry;
+
+    LIST_FOR_EACH_POP (entry, node, entries) {
+        free(entry);
+    }
+}
+
 #define NL_TP_NAME_PREFIX "ovs_tp_"
 
 struct dpif_netlink_timeout_policy_protocol {
@@ -4166,6 +4346,12 @@ dpif_netlink_init(void)
             VLOG_INFO("Generic Netlink family '%s' does not exist. "
                       "Please update the Open vSwitch kernel module to enable "
                       "the conntrack limit feature.", OVS_CT_LIMIT_FAMILY);
+        }
+        if (nl_lookup_genl_family(OVS_SKMAP_FAMILY,
+                                  &ovs_skmap_family) < 0) {
+            VLOG_INFO("Generic Netlink family '%s' does not exist. "
+                      "Please update the Open vSwitch kernel module to enable "
+                      "the socket map feature.", OVS_SKMAP_FAMILY);
         }
 
         ovs_tunnels_out_of_tree = dpif_netlink_rtnl_probe_oot_tunnels();

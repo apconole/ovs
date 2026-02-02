@@ -33,6 +33,7 @@
 #include "dirs.h"
 #include "dpctl.h"
 #include "dpif.h"
+#include "dpif-netlink.h"
 #include "dpif-offload.h"
 #include "dpif-provider.h"
 #include "openvswitch/dynamic-string.h"
@@ -3019,6 +3020,206 @@ out:
 
     return error;
 }
+
+/* Socket map operations. */
+
+static void
+format_skmap_entry(const struct dpif_netlink_skmap_entry *entry,
+                   struct ds *ds)
+{
+    ds_put_format(ds, "src="IP_FMT",dst="IP_FMT",sport=%"PRIu16
+                  ",dport=%"PRIu16",proto=%"PRIu8",state=%"PRIu8,
+                  IP_ARGS(entry->ipv4_src),
+                  IP_ARGS(entry->ipv4_dst),
+                  ntohs(entry->tp_src),
+                  ntohs(entry->tp_dst),
+                  entry->protocol,
+                  entry->sock_state);
+}
+
+static int
+parse_skmap_key(const char *arg, struct dpif_netlink_skmap_entry *entry,
+                struct ds *ds)
+{
+    ovs_be32 src = 0, dst = 0;
+    uint16_t sport = 0, dport = 0;
+    uint8_t proto = 0;
+    char *copy = xstrdup(arg);
+    char *save_ptr = NULL;
+    int error = 0;
+
+    memset(entry, 0, sizeof *entry);
+
+    for (char *token = strtok_r(copy, ",", &save_ptr);
+         token;
+         token = strtok_r(NULL, ",", &save_ptr)) {
+
+        if (!strncmp(token, "src=", 4)) {
+            if (!ip_parse(token + 4, &src)) {
+                ds_put_format(ds, "invalid src IP: %s", token + 4);
+                error = EINVAL;
+                goto out;
+            }
+        } else if (!strncmp(token, "dst=", 4)) {
+            if (!ip_parse(token + 4, &dst)) {
+                ds_put_format(ds, "invalid dst IP: %s", token + 4);
+                error = EINVAL;
+                goto out;
+            }
+        } else if (!strncmp(token, "sport=", 6)) {
+            if (!ovs_scan(token + 6, "%"SCNu16, &sport)) {
+                ds_put_format(ds, "invalid sport: %s", token + 6);
+                error = EINVAL;
+                goto out;
+            }
+        } else if (!strncmp(token, "dport=", 6)) {
+            if (!ovs_scan(token + 6, "%"SCNu16, &dport)) {
+                ds_put_format(ds, "invalid dport: %s", token + 6);
+                error = EINVAL;
+                goto out;
+            }
+        } else if (!strncmp(token, "proto=", 6)) {
+            if (!ovs_scan(token + 6, "%"SCNu8, &proto)) {
+                ds_put_format(ds, "invalid proto: %s", token + 6);
+                error = EINVAL;
+                goto out;
+            }
+        } else {
+            ds_put_format(ds, "unknown key: %s", token);
+            error = EINVAL;
+            goto out;
+        }
+    }
+
+    entry->key_type = OVS_SK_MAP_KEY_TUPLE_BASED;
+    entry->ipv4_src = src;
+    entry->ipv4_dst = dst;
+    entry->tp_src = htons(sport);
+    entry->tp_dst = htons(dport);
+    entry->protocol = proto;
+
+out:
+    free(copy);
+    return error;
+}
+
+static int
+dpctl_skmap_get(int argc, const char *argv[], struct dpctl_params *dpctl_p)
+{
+    struct ds ds = DS_EMPTY_INITIALIZER;
+    int i = dp_arg_exists(argc, argv) ? 2 : 1;
+    int error;
+    int dp_ifindex = 0;
+    struct dpif *dpif = NULL;
+
+    if (dp_arg_exists(argc, argv)) {
+        error = opt_dpif_open(argc, argv, dpctl_p, INT_MAX, &dpif);
+        if (error) {
+            goto error;
+        }
+        dp_ifindex = dpif_netlink_get_dp_ifindex(dpif);
+    }
+
+    if (argc > i) {
+        /* Query specific entry. */
+        struct dpif_netlink_skmap_entry query, reply;
+
+        error = parse_skmap_key(argv[i], &query, &ds);
+        if (error) {
+            goto error;
+        }
+
+        error = dpif_netlink_skmap_get(dp_ifindex, &query, &reply);
+        if (!error) {
+            format_skmap_entry(&reply, &ds);
+            dpctl_print(dpctl_p, "%s\n", ds_cstr(&ds));
+        } else {
+            ds_put_cstr(&ds, "entry not found");
+            goto error;
+        }
+    } else {
+        /* Dump all entries. */
+        struct ovs_list entries = OVS_LIST_INITIALIZER(&entries);
+
+        error = dpif_netlink_skmap_dump(dp_ifindex, &entries);
+        if (!error) {
+            struct dpif_netlink_skmap_entry *entry;
+
+            LIST_FOR_EACH (entry, node, &entries) {
+                ds_clear(&ds);
+                format_skmap_entry(entry, &ds);
+                dpctl_print(dpctl_p, "%s\n", ds_cstr(&ds));
+            }
+            dpif_netlink_skmap_entries_free(&entries);
+        } else {
+            ds_put_format(&ds, "failed to dump socket map: %s",
+                          ovs_strerror(error));
+            goto error;
+        }
+    }
+
+    goto out;
+
+error:
+    dpctl_error(dpctl_p, error, "%s", ds_cstr(&ds));
+out:
+    if (dpif) {
+        dpif_close(dpif);
+    }
+    ds_destroy(&ds);
+    return error;
+}
+
+static int
+dpctl_skmap_del(int argc, const char *argv[], struct dpctl_params *dpctl_p)
+{
+    struct ds ds = DS_EMPTY_INITIALIZER;
+    int i = dp_arg_exists(argc, argv) ? 2 : 1;
+    int error;
+    int dp_ifindex = 0;
+    struct dpif *dpif = NULL;
+
+    if (i >= argc) {
+        ds_put_cstr(&ds, "skmap-del requires a key specification");
+        error = EINVAL;
+        goto error;
+    }
+
+    if (dp_arg_exists(argc, argv)) {
+        error = opt_dpif_open(argc, argv, dpctl_p, INT_MAX, &dpif);
+        if (error) {
+            goto error;
+        }
+        dp_ifindex = dpif_netlink_get_dp_ifindex(dpif);
+    }
+
+    struct dpif_netlink_skmap_entry entry;
+
+    error = parse_skmap_key(argv[i], &entry, &ds);
+    if (error) {
+        goto error;
+    }
+
+    error = dpif_netlink_skmap_del(dp_ifindex, &entry);
+    if (error) {
+        ds_put_format(&ds, "failed to delete socket map entry: %s",
+                      ovs_strerror(error));
+        goto error;
+    }
+
+    dpctl_print(dpctl_p, "socket map entry deleted\n");
+    goto out;
+
+error:
+    dpctl_error(dpctl_p, error, "%s", ds_cstr(&ds));
+out:
+    if (dpif) {
+        dpif_close(dpif);
+    }
+    ds_destroy(&ds);
+    return error;
+}
+
 
 static const struct dpctl_command all_commands[] = {
     { "add-dp", "dp [iface...]", 1, INT_MAX, dpctl_add_dp, DP_RW },
@@ -3076,6 +3277,10 @@ static const struct dpctl_command all_commands[] = {
        dpctl_ipf_set_max_nfrags, DP_RW },
     { "ipf-get-status", "[dp]", 0, 1, dpctl_ct_ipf_get_status,
        DP_RO },
+    { "skmap-get", "[dp] [src=A.B.C.D,dst=A.B.C.D,sport=N,dport=N,proto=N]",
+      0, 2, dpctl_skmap_get, DP_RO },
+    { "skmap-del", "[dp] src=A.B.C.D,dst=A.B.C.D,sport=N,dport=N,proto=N",
+      1, 2, dpctl_skmap_del, DP_RW },
     { "help", "", 0, INT_MAX, dpctl_help, DP_RO },
     { "list-commands", "", 0, INT_MAX, dpctl_list_commands, DP_RO },
 
