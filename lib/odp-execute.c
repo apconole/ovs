@@ -862,6 +862,9 @@ requires_datapath_assistance(const struct nlattr *a)
     case OVS_ACTION_ATTR_CT:
     case OVS_ACTION_ATTR_METER:
     case OVS_ACTION_ATTR_PSAMPLE:
+    case OVS_ACTION_ATTR_SOCK_TRY:
+    case OVS_ACTION_ATTR_MD_SOCK_TUPLE:
+    case OVS_ACTION_ATTR_ADD_SOCK:
         return true;
 
     case OVS_ACTION_ATTR_SET:
@@ -1295,6 +1298,9 @@ odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
         case OVS_ACTION_ATTR_UNSPEC:
         case OVS_ACTION_ATTR_DEC_TTL:
         case OVS_ACTION_ATTR_PSAMPLE:
+        case OVS_ACTION_ATTR_SOCK_TRY:
+        case OVS_ACTION_ATTR_MD_SOCK_TUPLE:
+        case OVS_ACTION_ATTR_ADD_SOCK:
         case __OVS_ACTION_ATTR_MAX:
         /* The following actions are handled by the scalar implementation. */
         case OVS_ACTION_ATTR_POP_VLAN:

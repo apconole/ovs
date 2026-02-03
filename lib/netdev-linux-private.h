@@ -110,6 +110,9 @@ struct netdev_linux {
 
     int numa_id;                /* NUMA node id. */
 
+    /* Socket lookup support. */
+    bool socket_lookup_enabled; /* Socket map actions enabled. */
+
 #ifdef HAVE_AF_XDP
     /* AF_XDP information. */
     struct xsk_socket_info **xsks;

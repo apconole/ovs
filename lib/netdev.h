@@ -354,6 +354,10 @@ int netdev_reconfigure(struct netdev *netdev);
 void netdev_wait_reconf_required(struct netdev *netdev);
 bool netdev_is_reconf_required(struct netdev *netdev);
 
+/* Socket lookup functions for socket map offload. */
+bool netdev_get_socket_lookup_enabled(const struct netdev *netdev);
+int netdev_set_socket_lookup_enabled(struct netdev *netdev, bool enabled);
+
 struct netdev_queue_dump {
     struct netdev *netdev;
     int error;

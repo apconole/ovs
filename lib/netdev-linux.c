@@ -3890,6 +3890,31 @@ exit:
     return error;
 }
 
+static bool
+netdev_linux_get_socket_lookup_enabled(const struct netdev *netdev_)
+{
+    struct netdev_linux *netdev = netdev_linux_cast(netdev_);
+    bool enabled;
+
+    ovs_mutex_lock(&netdev->mutex);
+    enabled = netdev->socket_lookup_enabled;
+    ovs_mutex_unlock(&netdev->mutex);
+
+    return enabled;
+}
+
+static int
+netdev_linux_set_socket_lookup_enabled(struct netdev *netdev_, bool enabled)
+{
+    struct netdev_linux *netdev = netdev_linux_cast(netdev_);
+
+    ovs_mutex_lock(&netdev->mutex);
+    netdev->socket_lookup_enabled = enabled;
+    ovs_mutex_unlock(&netdev->mutex);
+
+    return 0;
+}
+
 #define NETDEV_LINUX_CLASS_COMMON                               \
     .run = netdev_linux_run,                                    \
     .wait = netdev_linux_wait,                                  \
@@ -3927,7 +3952,11 @@ exit:
     .rxq_alloc = netdev_linux_rxq_alloc,                        \
     .rxq_dealloc = netdev_linux_rxq_dealloc,                    \
     .rxq_wait = netdev_linux_rxq_wait,                          \
-    .rxq_drain = netdev_linux_rxq_drain
+    .rxq_drain = netdev_linux_rxq_drain,                        \
+    .get_socket_lookup_enabled =                                \
+        netdev_linux_get_socket_lookup_enabled,                 \
+    .set_socket_lookup_enabled =                                \
+        netdev_linux_set_socket_lookup_enabled
 
 const struct netdev_class netdev_linux_class = {
     NETDEV_LINUX_CLASS_COMMON,

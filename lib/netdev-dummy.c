@@ -181,6 +181,9 @@ struct netdev_dummy {
 
     /* Set the segment size for netdev TSO support. */
     int ol_tso_segsz OVS_GUARDED;
+
+    /* Enable socket lookup for socket offload testing. */
+    bool socket_lookup_enabled OVS_GUARDED;
 };
 
 /* Max 'recv_queue_len' in struct netdev_dummy. */
@@ -871,6 +874,10 @@ netdev_dummy_get_config(const struct netdev *dev, struct smap *args)
         smap_add_format(args, "ol_tso_segsz", "%d", netdev->ol_tso_segsz);
     }
 
+    if (netdev->socket_lookup_enabled) {
+        smap_add_format(args, "socket_lookup", "%s", "true");
+    }
+
     /* 'dummy-pmd' specific config. */
     if (!netdev_is_pmd(dev)) {
         goto exit;
@@ -1058,6 +1065,9 @@ netdev_dummy_set_config(struct netdev *netdev_, const struct smap *args,
                                   | NETDEV_TX_OFFLOAD_TCP_CKSUM);
         }
     }
+
+    netdev->socket_lookup_enabled =
+        smap_get_bool(args, "socket_lookup", false);
 
     netdev_change_seq_changed(netdev_);
 
@@ -1743,6 +1753,31 @@ netdev_dummy_update_flags(struct netdev *netdev_,
     return error;
 }
 
+static bool
+netdev_dummy_get_socket_lookup_enabled(const struct netdev *netdev_)
+{
+    const struct netdev_dummy *netdev = netdev_dummy_cast(netdev_);
+    bool enabled;
+
+    ovs_mutex_lock(&netdev->mutex);
+    enabled = netdev->socket_lookup_enabled;
+    ovs_mutex_unlock(&netdev->mutex);
+
+    return enabled;
+}
+
+static int
+netdev_dummy_set_socket_lookup_enabled(struct netdev *netdev_, bool enabled)
+{
+    struct netdev_dummy *netdev = netdev_dummy_cast(netdev_);
+
+    ovs_mutex_lock(&netdev->mutex);
+    netdev->socket_lookup_enabled = enabled;
+    ovs_mutex_unlock(&netdev->mutex);
+
+    return 0;
+}
+
 #define NETDEV_DUMMY_CLASS_COMMON                       \
     .run = netdev_dummy_run,                            \
     .wait = netdev_dummy_wait,                          \
@@ -1769,6 +1804,8 @@ netdev_dummy_update_flags(struct netdev *netdev_,
     .dump_queue_stats = netdev_dummy_dump_queue_stats,  \
     .get_addr_list = netdev_dummy_get_addr_list,        \
     .update_flags = netdev_dummy_update_flags,          \
+    .get_socket_lookup_enabled = netdev_dummy_get_socket_lookup_enabled, \
+    .set_socket_lookup_enabled = netdev_dummy_set_socket_lookup_enabled, \
     .rxq_alloc = netdev_dummy_rxq_alloc,                \
     .rxq_construct = netdev_dummy_rxq_construct,        \
     .rxq_destruct = netdev_dummy_rxq_destruct,          \

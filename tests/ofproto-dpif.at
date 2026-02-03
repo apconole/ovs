@@ -13549,3 +13549,90 @@ AT_CHECK([ovs-appctl coverage/read-counter revalidate_missing_dp_flow], [0],
 
 OVS_VSWITCHD_STOP(["/failed to flow_del (No such file or directory)/d"])
 AT_CLEANUP
+
+dnl Socket action generation tests
+AT_SETUP([ofproto-dpif - socket action generation])
+OVS_VSWITCHD_START
+add_of_ports br0 1 2
+
+dnl Add flows for simple forwarding.
+AT_CHECK([ovs-ofctl add-flow br0 "in_port=1 actions=output:2"])
+AT_CHECK([ovs-ofctl add-flow br0 "in_port=2 actions=output:1"])
+
+dnl Enable socket_lookup on port p1.
+AT_CHECK([ovs-vsctl set interface p1 options:socket_lookup=true])
+AT_CHECK([ovs-appctl revalidator/wait])
+
+dnl Define a TCP flow for tracing.
+tcp_flow="in_port(1),eth(src=50:54:00:00:00:05,dst=50:54:00:00:00:07),eth_type(0x0800),ipv4(src=192.168.0.1,dst=192.168.0.2,proto=6,tos=0,ttl=128,frag=no),tcp(src=12345,dst=80)"
+
+dnl Trace TCP flow - should generate socket actions.
+AT_CHECK([ovs-appctl ofproto/trace ovs-dummy "$tcp_flow"], [0], [stdout])
+AT_CHECK([grep "Datapath actions" stdout], [0], [stdout])
+dnl Verify we get sock_tuple and sock(try,...) wrapper.
+AT_CHECK([grep -c "sock_tuple" stdout], [0], [dnl
+1
+])
+AT_CHECK([grep -c "sock.try" stdout], [0], [dnl
+1
+])
+dnl Verify we get sock(commit,...) before output.
+AT_CHECK([grep -c "sock.commit" stdout], [0], [dnl
+1
+])
+
+dnl Trace a non-TCP flow - should not generate socket actions.
+icmp_flow="in_port(1),eth(src=50:54:00:00:00:05,dst=50:54:00:00:00:07),eth_type(0x0800),ipv4(src=192.168.0.1,dst=192.168.0.2,proto=1,tos=0,ttl=128,frag=no),icmp(type=8,code=0)"
+AT_CHECK([ovs-appctl ofproto/trace ovs-dummy "$icmp_flow"], [0], [stdout])
+AT_CHECK([grep "Datapath actions" stdout], [0], [stdout])
+dnl Verify no socket actions for ICMP.
+AT_CHECK([grep -c "sock" stdout], [1], [dnl
+0
+])
+
+dnl Trace UDP flow - should not generate socket actions (TCP only).
+udp_flow="in_port(1),eth(src=50:54:00:00:00:05,dst=50:54:00:00:00:07),eth_type(0x0800),ipv4(src=192.168.0.1,dst=192.168.0.2,proto=17,tos=0,ttl=128,frag=no),udp(src=12345,dst=53)"
+AT_CHECK([ovs-appctl ofproto/trace ovs-dummy "$udp_flow"], [0], [stdout])
+AT_CHECK([grep "Datapath actions" stdout], [0], [stdout])
+AT_CHECK([grep -c "sock" stdout], [1], [dnl
+0
+])
+
+dnl Disable socket_lookup on p1.
+AT_CHECK([ovs-vsctl remove interface p1 options socket_lookup])
+AT_CHECK([ovs-appctl revalidator/wait])
+
+dnl Trace TCP flow again - should no longer generate socket actions.
+AT_CHECK([ovs-appctl ofproto/trace ovs-dummy "$tcp_flow"], [0], [stdout])
+AT_CHECK([grep "Datapath actions" stdout], [0], [stdout])
+AT_CHECK([grep -c "sock" stdout], [1], [dnl
+0
+])
+
+OVS_VSWITCHD_STOP
+AT_CLEANUP
+
+AT_SETUP([ofproto-dpif - socket action with recirculation])
+OVS_VSWITCHD_START
+add_of_ports br0 1 2
+
+dnl Add a flow that uses group for load balancing (causes recirc).
+AT_CHECK([ovs-ofctl add-group br0 "group_id=1,type=select,selection_method=hash,bucket=output:2"])
+AT_CHECK([ovs-ofctl add-flow br0 "in_port=1 actions=group:1"])
+
+dnl Enable socket_lookup on port p1.
+AT_CHECK([ovs-vsctl set interface p1 options:socket_lookup=true])
+AT_CHECK([ovs-appctl revalidator/wait])
+
+dnl Define a TCP flow.
+tcp_flow="in_port(1),eth(src=50:54:00:00:00:05,dst=50:54:00:00:00:07),eth_type(0x0800),ipv4(src=192.168.0.1,dst=192.168.0.2,proto=6,tos=0,ttl=128,frag=no),tcp(src=12345,dst=80)"
+
+dnl Trace TCP flow - actions should include recirc inside sock(try).
+AT_CHECK([ovs-appctl ofproto/trace ovs-dummy "$tcp_flow"], [0], [stdout])
+AT_CHECK([grep "Datapath actions" stdout], [0], [stdout])
+dnl Verify sock_tuple and sock(try) are present.
+AT_CHECK([grep "sock_tuple" stdout | head -1], [0], [ignore])
+AT_CHECK([grep "sock.try" stdout | head -1], [0], [ignore])
+
+OVS_VSWITCHD_STOP
+AT_CLEANUP

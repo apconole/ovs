@@ -146,6 +146,9 @@ odp_action_len(uint16_t type)
     case OVS_ACTION_ATTR_DEC_TTL: return ATTR_LEN_VARIABLE;
     case OVS_ACTION_ATTR_DROP: return sizeof(uint32_t);
     case OVS_ACTION_ATTR_PSAMPLE: return ATTR_LEN_VARIABLE;
+    case OVS_ACTION_ATTR_SOCK_TRY: return ATTR_LEN_VARIABLE;
+    case OVS_ACTION_ATTR_ADD_SOCK: return sizeof(uint32_t);
+    case OVS_ACTION_ATTR_MD_SOCK_TUPLE: return 0;
 
     case OVS_ACTION_ATTR_UNSPEC:
     case __OVS_ACTION_ATTR_MAX:
@@ -265,6 +268,27 @@ format_odp_clone_action(struct ds *ds, const struct nlattr *attr,
     ds_put_format(ds, "(");
     format_odp_actions(ds, nla_acts, len, portno_names);
     ds_put_format(ds, ")");
+}
+
+static void
+format_odp_sock_try_action(struct ds *ds, const struct nlattr *attr,
+                           const struct hmap *portno_names)
+{
+    static const struct nl_policy ovs_sock_try_policy[] = {
+        [OVS_SOCK_TRY_ATTR_ACTIONS] = { .type = NL_A_NESTED },
+    };
+    struct nlattr *a[ARRAY_SIZE(ovs_sock_try_policy)];
+
+    ds_put_cstr(ds, "sock(try,");
+    if (nl_parse_nested(attr, ovs_sock_try_policy, a,
+                        ARRAY_SIZE(ovs_sock_try_policy))) {
+        struct nlattr *actions = a[OVS_SOCK_TRY_ATTR_ACTIONS];
+        if (actions) {
+            format_odp_actions(ds, nl_attr_get(actions),
+                               nl_attr_get_size(actions), portno_names);
+        }
+    }
+    ds_put_char(ds, ')');
 }
 
 static void
@@ -1334,6 +1358,17 @@ format_odp_action(struct ds *ds, const struct nlattr *a,
         break;
     case OVS_ACTION_ATTR_PSAMPLE:
         format_odp_psample_action(ds, a);
+        break;
+    case OVS_ACTION_ATTR_SOCK_TRY:
+        format_odp_sock_try_action(ds, a, portno_names);
+        break;
+    case OVS_ACTION_ATTR_ADD_SOCK:
+        ds_put_cstr(ds, "sock(commit,");
+        odp_portno_name_format(portno_names, nl_attr_get_odp_port(a), ds);
+        ds_put_char(ds, ')');
+        break;
+    case OVS_ACTION_ATTR_MD_SOCK_TUPLE:
+        ds_put_cstr(ds, "sock_tuple");
         break;
     case OVS_ACTION_ATTR_UNSPEC:
     case __OVS_ACTION_ATTR_MAX:
@@ -2791,6 +2826,46 @@ parse_odp_action__(struct parse_odp_context *context, const char *s,
 
     if (!strncmp(s, "psample(", 8)) {
         return parse_odp_psample_action(s, actions);
+    }
+
+    /* sock(try, <actions>) */
+    {
+        if (!strncmp(s, "sock(try,", 9)) {
+            size_t sock_ofs, actions_ofs;
+            int n = 9;
+
+            sock_ofs = nl_msg_start_nested(actions, OVS_ACTION_ATTR_SOCK_TRY);
+            actions_ofs = nl_msg_start_nested(actions,
+                                              OVS_SOCK_TRY_ATTR_ACTIONS);
+            int retval = parse_action_list(context, s + n, actions);
+            if (retval < 0) {
+                return retval;
+            }
+            n += retval;
+            nl_msg_end_nested(actions, actions_ofs);
+            nl_msg_end_nested(actions, sock_ofs);
+            return n + 1;  /* +1 for closing ')' */
+        }
+    }
+
+    /* sock(commit, <port>) */
+    {
+        uint32_t port;
+        int n;
+
+        if (ovs_scan(s, "sock(commit,%"SCNi32")%n", &port, &n)) {
+            nl_msg_put_u32(actions, OVS_ACTION_ATTR_ADD_SOCK, port);
+            return n;
+        }
+    }
+
+    /* sock_tuple */
+    {
+        if (!strncmp(s, "sock_tuple", 10) &&
+            (!s[10] || strchr(delimiters_end, s[10]))) {
+            nl_msg_put_flag(actions, OVS_ACTION_ATTR_MD_SOCK_TUPLE);
+            return 10;
+        }
     }
 
     {

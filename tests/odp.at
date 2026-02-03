@@ -505,6 +505,44 @@ odp_flow_from_string: error (syntax error at encap(encap(encap(encap(encap(encap
 ])
 AT_CLEANUP
 
+AT_SETUP([OVS datapath actions parsing and formatting - socket actions])
+dnl Test round-trip parsing/formatting of socket actions.
+dnl Note: recirc takes decimal input but outputs hex format.
+AT_DATA([actions.txt], [dnl
+sock_tuple
+sock(commit,1)
+sock(commit,5)
+sock(try,1)
+sock(try,sock_tuple,1)
+sock(try,sock_tuple,sock(commit,2),2)
+])
+AT_CHECK_UNQUOTED([ovstest test-odp parse-actions < actions.txt], [0],
+  [`cat actions.txt`
+])
+
+dnl Test sock(try) with recirc - input decimal, output hex
+AT_CHECK([echo 'sock(try,recirc(1))' | ovstest test-odp parse-actions], [0], [dnl
+sock(try,recirc(0x1))
+])
+AT_CLEANUP
+
+AT_SETUP([OVS datapath actions parsing and formatting - socket actions invalid])
+AT_DATA([actions.txt], [dnl
+sock()
+sock(invalid)
+sock(try)
+sock(commit)
+sock(commit,abc)
+])
+AT_CHECK_UNQUOTED([ovstest test-odp parse-actions < actions.txt], [0], [dnl
+odp_actions_from_string: error
+odp_actions_from_string: error
+odp_actions_from_string: error
+odp_actions_from_string: error
+odp_actions_from_string: error
+])
+AT_CLEANUP
+
 AT_BANNER([datapath actions in userspace])
 AT_SETUP([odp-execute - actions implementation])
 OVS_VSWITCHD_START()

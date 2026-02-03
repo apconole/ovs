@@ -2415,6 +2415,33 @@ netdev_is_reconf_required(struct netdev *netdev)
     return seq_read(netdev->reconfigure_seq) != netdev->last_reconfigure_seq;
 }
 
+/* Returns true if socket lookup is enabled for 'netdev'.
+ *
+ * Socket lookup enables the datapath to use socket map actions (sock_try,
+ * sock_commit) to optimize TCP forwarding by looking up sockets directly. */
+bool
+netdev_get_socket_lookup_enabled(const struct netdev *netdev)
+{
+    const struct netdev_class *class = netdev->netdev_class;
+
+    return (class->get_socket_lookup_enabled
+            ? class->get_socket_lookup_enabled(netdev)
+            : false);
+}
+
+/* Enables or disables socket lookup for 'netdev'.
+ *
+ * Returns 0 if successful, otherwise a positive errno value. */
+int
+netdev_set_socket_lookup_enabled(struct netdev *netdev, bool enabled)
+{
+    const struct netdev_class *class = netdev->netdev_class;
+
+    return (class->set_socket_lookup_enabled
+            ? class->set_socket_lookup_enabled(netdev, enabled)
+            : EOPNOTSUPP);
+}
+
 /* Give a chance to 'netdev' to reconfigure some of its parameters.
  *
  * If a module uses netdev_send() and netdev_rxq_recv(), it must call this

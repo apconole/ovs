@@ -1126,6 +1126,19 @@ enum ovs_action_attr {
 	OVS_ACTION_ATTR_DROP,         /* u32 xlate_error. */
 	OVS_ACTION_ATTR_PSAMPLE,      /* Nested OVS_PSAMPLE_ATTR_*. */
 
+	OVS_ACTION_ATTR_SOCK_TRY,     /* Nested OVS_SOCK_TRY_ATTR_*.
+                                   * Attempt to find a socket in the map.
+                                   * If an appropriate socket is found,
+                                   * then the packet is forwarded and the
+                                   * pipeline ends.  Otherwise, execute
+                                   * the fallback actions. */
+	OVS_ACTION_ATTR_MD_SOCK_TUPLE, /* Sets the socket map criteria to use
+                                    * the key's 5-tuple details. */
+	OVS_ACTION_ATTR_ADD_SOCK,     /* Looks at the port specified by u32,
+                                   * and if possible tries to find a socket.  If
+                                   * found, take a reference to the socket, and
+                                   * populate the map with the last loaded sock
+                                   *  tuple as a key, and the socket as value */
 #ifndef __KERNEL__
 	OVS_ACTION_ATTR_TUNNEL_PUSH,   /* struct ovs_action_push_tnl*/
 	OVS_ACTION_ATTR_TUNNEL_POP,    /* u32 port number. */
@@ -1142,6 +1155,19 @@ enum ovs_action_attr {
 };
 
 #define OVS_ACTION_ATTR_MAX (__OVS_ACTION_ATTR_MAX - 1)
+
+/**
+ * enum ovs_sock_try_attr - Attributes for %OVS_ACTION_ATTR_SOCK_TRY action.
+ * @OVS_SOCK_TRY_ATTR_ACTIONS: Nested fallback actions to execute if socket
+ *                             lookup fails. Required.
+ */
+enum ovs_sock_try_attr {
+	OVS_SOCK_TRY_ATTR_UNSPEC,
+	OVS_SOCK_TRY_ATTR_ACTIONS,    /* Nested fallback actions. */
+	__OVS_SOCK_TRY_ATTR_MAX
+};
+
+#define OVS_SOCK_TRY_ATTR_MAX (__OVS_SOCK_TRY_ATTR_MAX - 1)
 
 /* Meters. */
 #define OVS_METER_FAMILY  "ovs_meter"

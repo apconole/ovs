@@ -860,6 +860,26 @@ struct netdev_class {
     /* Get a block_id from the netdev.
      * Returns the block_id or 0 if none exists for netdev. */
     uint32_t (*get_block_id)(struct netdev *);
+
+/* ## -------------------- ## */
+/* ## Socket Lookup Functions ## */
+/* ## -------------------- ## */
+
+    /* Returns true if socket lookup is enabled for this netdev.
+     *
+     * When socket lookup is enabled, the datapath may attempt to use
+     * socket map actions (sock_try, sock_commit) to optimize TCP forwarding.
+     *
+     * This function may be set to null if socket lookup is never supported. */
+    bool (*get_socket_lookup_enabled)(const struct netdev *netdev);
+
+    /* Enables or disables socket lookup for this netdev.
+     *
+     * Returns 0 if successful, otherwise a positive errno value.
+     *
+     * This function may be set to null if socket lookup configuration is not
+     * supported. */
+    int (*set_socket_lookup_enabled)(struct netdev *netdev, bool enabled);
 };
 
 int netdev_register_provider(const struct netdev_class *);

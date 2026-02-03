@@ -41,6 +41,7 @@
 #include "mcast-snooping.h"
 #include "multipath.h"
 #include "netdev-vport.h"
+#include "netdev.h"
 #include "netlink.h"
 #include "nx-match.h"
 #include "odp-execute.h"
@@ -401,6 +402,14 @@ struct xlate_ctx {
      * on the current bridge. This is used to determine whether conntrack
      * state from the datapath should be honored after thawing. */
     bool conntracked;
+
+    /* Socket map action tracking.
+     * When socket lookup is enabled on the input port, we wrap all actions
+     * in a sock(try, ...) action so the datapath can attempt to forward
+     * directly to a socket.  These fields track the nesting state. */
+    bool sock_try_active;           /* True if inside sock(try) wrapper. */
+    size_t sock_try_offset;         /* Offset of OVS_ACTION_ATTR_SOCK_TRY. */
+    size_t sock_try_actions_offset; /* Offset of OVS_SOCK_TRY_ATTR_ACTIONS. */
 
     /* Pointer to an embedded NAT action in a conntrack action, or NULL. */
     struct ofpact_nat *ct_nat_action;
@@ -4456,6 +4465,58 @@ terminate_native_tunnel(struct xlate_ctx *ctx, const struct xport *xport,
     return *tnl_port != ODPP_NONE;
 }
 
+/* Returns true if socket map actions should be emitted for this flow
+ * on the given port.  Socket map actions are only useful for TCP flows
+ * on ports with socket lookup enabled. */
+static bool
+should_emit_socket_actions(struct xlate_ctx *ctx, const struct xport *xport)
+{
+    struct flow *flow = &ctx->xin->flow;
+
+    return (xport && xport->netdev &&
+            netdev_get_socket_lookup_enabled(xport->netdev) &&
+            (flow->dl_type == htons(ETH_TYPE_IP) ||
+             flow->dl_type == htons(ETH_TYPE_IPV6)) &&
+            flow->nw_proto == IPPROTO_TCP &&
+            flow->tp_src && flow->tp_dst);
+}
+
+/* Starts the sock(try, ...) wrapper at the beginning of translation
+ * when the input port has socket lookup enabled. */
+static void
+maybe_emit_sock_try_start(struct xlate_ctx *ctx)
+{
+    const struct xport *in_xport = get_ofp_port(ctx->xbridge,
+                                                ctx->xin->flow.in_port.ofp_port);
+
+    if (!should_emit_socket_actions(ctx, in_xport)) {
+        return;
+    }
+
+    /* Mark that we're inside a sock(try) wrapper. */
+    ctx->sock_try_active = true;
+
+    /* Emit sock_tuple to set 5-tuple criteria. */
+    nl_msg_put_flag(ctx->odp_actions, OVS_ACTION_ATTR_MD_SOCK_TUPLE);
+
+    /* Start sock(try) nested action - fallback actions follow. */
+    ctx->sock_try_offset = nl_msg_start_nested(ctx->odp_actions,
+                                               OVS_ACTION_ATTR_SOCK_TRY);
+    ctx->sock_try_actions_offset = nl_msg_start_nested(ctx->odp_actions,
+                                                       OVS_SOCK_TRY_ATTR_ACTIONS);
+}
+
+/* Closes the sock(try, ...) wrapper at the end of translation. */
+static void
+maybe_emit_sock_try_end(struct xlate_ctx *ctx)
+{
+    if (ctx->sock_try_active) {
+        nl_msg_end_nested(ctx->odp_actions, ctx->sock_try_actions_offset);
+        nl_msg_end_nested(ctx->odp_actions, ctx->sock_try_offset);
+        ctx->sock_try_active = false;
+    }
+}
+
 static void
 compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
                         const struct xlate_bond_recirc *xr, bool check_stp,
@@ -4562,6 +4623,13 @@ compose_output_action__(struct xlate_ctx *ctx, ofp_port_t ofp_port,
     if (out_port != ODPP_NONE) {
         /* Commit accumulated flow updates before output. */
         xlate_commit_actions(ctx);
+
+        /* Emit sock(commit, port) before output if socket offload
+         * is enabled on the output port. */
+        if (should_emit_socket_actions(ctx, xport) || ctx->sock_try_active) {
+            nl_msg_put_u32(ctx->odp_actions, OVS_ACTION_ATTR_ADD_SOCK,
+                           odp_to_u32(out_port));
+        }
 
         if (xr && bond_use_lb_output_action(xport->xbundle->bond)) {
             /*
@@ -8297,6 +8365,10 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
 
         .ct_nat_action = NULL,
 
+        .sock_try_active = false,
+        .sock_try_offset = 0,
+        .sock_try_actions_offset = 0,
+
         .action_set_has_group = false,
         .action_set = OFPBUF_STUB_INITIALIZER(action_set_stub),
     };
@@ -8535,6 +8607,14 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
             }
 
             mirror_ingress_packet(&ctx);
+
+            /* Start sock(try) wrapper if input port has socket lookup enabled.
+             * This wraps all translated actions as fallback for socket lookup.
+             * We only do this for non-frozen packets (fresh translations). */
+            if (!xin->frozen_state) {
+                maybe_emit_sock_try_start(&ctx);
+            }
+
             do_xlate_actions(ofpacts, ofpacts_len, &ctx, true, false);
             if (ctx.error) {
                 goto exit;
@@ -8645,6 +8725,9 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
     }
 
     xlate_wc_finish(&ctx);
+
+    /* Close the sock(try) wrapper if we started one. */
+    maybe_emit_sock_try_end(&ctx);
 
 exit:
     /* Reset the table to what it was when we came in. If we only fetched
