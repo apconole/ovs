@@ -1707,6 +1707,51 @@ CHECK_FEATURE__(ct_orig_tuple6, ct_orig_tuple6, ct_nw_proto, 1, ETH_TYPE_IPV6)
 #undef CHECK_FEATURE
 #undef CHECK_FEATURE__
 
+/* Tests whether 'backer''s datapath supports socket map actions
+ * (OVS_ACTION_ATTR_MD_SOCK_TUPLE, OVS_ACTION_ATTR_SOCK_TRY,
+ *  OVS_ACTION_ATTR_ADD_SOCK). */
+static bool
+check_socket_actions(struct dpif_backer *backer)
+{
+    struct odputil_keybuf keybuf;
+    struct ofpbuf actions;
+    struct ofpbuf key;
+    struct flow flow;
+    bool supported;
+
+    struct odp_flow_key_parms odp_parms = {
+        .flow = &flow,
+        .probe = true,
+    };
+
+    memset(&flow, 0, sizeof flow);
+    ofpbuf_use_stack(&key, &keybuf, sizeof keybuf);
+    odp_flow_key_from_flow(&odp_parms, &key);
+
+    ofpbuf_init(&actions, 64);
+
+    nl_msg_put_flag(&actions, OVS_ACTION_ATTR_MD_SOCK_TUPLE);
+
+    size_t sock_try_ofs = nl_msg_start_nested(&actions,
+                                              OVS_ACTION_ATTR_SOCK_TRY);
+    size_t fallback_ofs = nl_msg_start_nested(&actions,
+                                              OVS_SOCK_TRY_ATTR_ACTIONS);
+    nl_msg_put_odp_port(&actions, OVS_ACTION_ATTR_OUTPUT, u32_to_odp(1));
+    nl_msg_end_nested(&actions, fallback_ofs);
+    nl_msg_end_nested(&actions, sock_try_ofs);
+
+    nl_msg_put_u32(&actions, OVS_ACTION_ATTR_ADD_SOCK, 1);
+
+    supported = dpif_probe_feature(backer->dpif, "socket_actions",
+                                   &key, &actions, NULL);
+    ofpbuf_uninit(&actions);
+
+    VLOG_INFO("%s: Datapath %s socket map actions",
+              dpif_name(backer->dpif),
+              supported ? "supports" : "does not support");
+    return supported;
+}
+
 static void
 copy_support(struct dpif_backer_support *dst, struct dpif_backer_support *src)
 {
@@ -1750,6 +1795,7 @@ check_support(struct dpif_backer *backer)
     backer->rt_support.ct_zero_snat = dpif_supports_ct_zero_snat(backer);
     backer->rt_support.add_mpls = check_add_mpls(backer);
     backer->rt_support.psample = check_psample(backer);
+    backer->rt_support.socket_actions = check_socket_actions(backer);
 
     /* Flow fields. */
     backer->rt_support.odp.ct_state = check_ct_state(backer);

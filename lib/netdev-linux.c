@@ -3890,6 +3890,34 @@ exit:
     return error;
 }
 
+static int
+netdev_linux_get_config(const struct netdev *netdev_, struct smap *args)
+{
+    struct netdev_linux *netdev = netdev_linux_cast(netdev_);
+
+    ovs_mutex_lock(&netdev->mutex);
+    if (netdev->socket_lookup_enabled) {
+        smap_add(args, "socket_lookup", "true");
+    }
+    ovs_mutex_unlock(&netdev->mutex);
+
+    return 0;
+}
+
+static int
+netdev_linux_set_config(struct netdev *netdev_, const struct smap *args,
+                        char **errp OVS_UNUSED)
+{
+    struct netdev_linux *netdev = netdev_linux_cast(netdev_);
+
+    ovs_mutex_lock(&netdev->mutex);
+    netdev->socket_lookup_enabled =
+        smap_get_bool(args, "socket_lookup", false);
+    ovs_mutex_unlock(&netdev->mutex);
+
+    return 0;
+}
+
 static bool
 netdev_linux_get_socket_lookup_enabled(const struct netdev *netdev_)
 {
@@ -3920,6 +3948,8 @@ netdev_linux_set_socket_lookup_enabled(struct netdev *netdev_, bool enabled)
     .wait = netdev_linux_wait,                                  \
     .alloc = netdev_linux_alloc,                                \
     .dealloc = netdev_linux_dealloc,                            \
+    .get_config = netdev_linux_get_config,                      \
+    .set_config = netdev_linux_set_config,                      \
     .send_wait = netdev_linux_send_wait,                        \
     .set_etheraddr = netdev_linux_set_etheraddr,                \
     .get_etheraddr = netdev_linux_get_etheraddr,                \

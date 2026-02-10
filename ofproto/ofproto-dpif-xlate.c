@@ -4473,7 +4473,8 @@ should_emit_socket_actions(struct xlate_ctx *ctx, const struct xport *xport)
 {
     struct flow *flow = &ctx->xin->flow;
 
-    return (xport && xport->netdev &&
+    return (ctx->xbridge->support.socket_actions &&
+            xport && xport->netdev &&
             netdev_get_socket_lookup_enabled(xport->netdev) &&
             (flow->dl_type == htons(ETH_TYPE_IP) ||
              flow->dl_type == htons(ETH_TYPE_IPV6)) &&

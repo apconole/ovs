@@ -216,7 +216,10 @@ struct group_dpif *group_dpif_lookup(struct ofproto_dpif *,
     DPIF_SUPPORT_FIELD(bool, add_mpls, "MPLS Label add")                    \
                                                                             \
     /* True if the datapath supports psample action. */                     \
-    DPIF_SUPPORT_FIELD(bool, psample, "psample action")
+    DPIF_SUPPORT_FIELD(bool, psample, "psample action")                     \
+                                                                            \
+    /* True if the datapath supports socket map actions. */                 \
+    DPIF_SUPPORT_FIELD(bool, socket_actions, "Socket map actions")
 
 
 /* Stores the various features which the corresponding backer supports. */
