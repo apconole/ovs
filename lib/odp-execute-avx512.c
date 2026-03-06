@@ -747,7 +747,7 @@ action_avx512_set_ipv6(struct dp_packet_batch *batch, const struct nlattr *a)
             uint8_t old_tc = ntohl(get_16aligned_be32(&nh->ip6_flow)) >> 20;
             uint8_t key_tc = key->ipv6_tclass | (old_tc & ~mask->ipv6_tclass);
 
-            packet_set_ipv6_tc(&nh->ip6_flow, key_tc);
+            ip_set_ipv6_tc(&nh->ip6_flow, key_tc);
         }
     }
 }

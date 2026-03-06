@@ -1780,7 +1780,7 @@ match_format(const struct match *match,
         format_be16_masked(s, "tp_dst", f->tp_dst, wc->masks.tp_dst);
     }
     if (is_ip_any(f) && f->nw_proto == IPPROTO_TCP && wc->masks.tcp_flags) {
-        format_flags_masked(s, "tcp_flags", packet_tcp_flag_to_string,
+        format_flags_masked(s, "tcp_flags", tcp_flag_to_string,
                             ntohs(f->tcp_flags), TCP_FLAGS(wc->masks.tcp_flags),
                             TCP_FLAGS(OVS_BE16_MAX));
     }

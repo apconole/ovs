@@ -33,6 +33,7 @@
 #include "openvswitch/hmap.h"
 #include "openvswitch/list.h"
 #include "netdev.h"
+#include "net-proto.h"
 #include "odp-util.h"
 #include "openvswitch/ofpbuf.h"
 #include "ovs-thread.h"

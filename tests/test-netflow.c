@@ -89,7 +89,7 @@ print_netflow(struct ofpbuf *buf)
                    ntohs(rec->src_port), ntohs(rec->dst_port));
             if (rec->tcp_flags) {
                 struct ds s = DS_EMPTY_INITIALIZER;
-                packet_format_tcp_flags(&s, rec->tcp_flags);
+                format_tcp_flags(&s, rec->tcp_flags);
                 printf(" %s", ds_cstr(&s));
                 ds_destroy(&s);
             }

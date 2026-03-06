@@ -3190,7 +3190,7 @@ parse_mf_flags(const char *s, const char *(*bit_to_string)(uint32_t),
 static char *
 mf_from_tcp_flags_string(const char *s, ovs_be16 *flagsp, ovs_be16 *maskp)
 {
-    return parse_mf_flags(s, packet_tcp_flag_to_string, "TCP", flagsp,
+    return parse_mf_flags(s, tcp_flag_to_string, "TCP", flagsp,
                           TCP_FLAGS_BE16(OVS_BE16_MAX), maskp);
 }
 
@@ -3374,7 +3374,7 @@ mf_format_tnl_flags_string(ovs_be16 value, ovs_be16 mask, struct ds *s)
 static void
 mf_format_tcp_flags_string(ovs_be16 value, ovs_be16 mask, struct ds *s)
 {
-    format_flags_masked(s, NULL, packet_tcp_flag_to_string, ntohs(value),
+    format_flags_masked(s, NULL, tcp_flag_to_string, ntohs(value),
                         TCP_FLAGS(mask), TCP_FLAGS(OVS_BE16_MAX));
 }
 

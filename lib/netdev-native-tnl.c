@@ -209,7 +209,7 @@ netdev_tnl_push_ip_header(struct dp_packet *packet, const void *header,
         ip6 = netdev_tnl_ipv6_hdr(eth);
         *ip_tot_size -= IPV6_HEADER_LEN;
         ip6->ip6_plen = htons(*ip_tot_size);
-        packet_set_ipv6_flow_label(&ip6->ip6_flow, ipv6_label);
+        ip_set_ipv6_flow_label(&ip6->ip6_flow, ipv6_label);
         dp_packet_ip_checksum_set_unknown(packet);
 
         packet->l4_ofs = dp_packet_size(packet) - *ip_tot_size;
@@ -246,9 +246,9 @@ udp_extract_tnl_md(struct dp_packet *packet, struct flow_tnl *tnl,
             uint32_t csum;
             COVERAGE_INC(native_tnl_l4csum_checked);
             if (netdev_tnl_is_header_ipv6(dp_packet_data(packet))) {
-                csum = packet_csum_pseudoheader6(dp_packet_l3(packet));
+                csum = ip_csum_pseudoheader6(dp_packet_l3(packet));
             } else {
-                csum = packet_csum_pseudoheader(dp_packet_l3(packet));
+                csum = ip_csum_pseudoheader(dp_packet_l3(packet));
             }
 
             csum = csum_continue(csum, udp, dp_packet_size(packet) -

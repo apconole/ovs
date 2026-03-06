@@ -960,8 +960,8 @@ nat_inner_packet(struct dp_packet *pkt, struct conn_key *key,
         struct icmp6_data_header *icmp6 = (struct icmp6_data_header *) l4;
         icmp6->icmp6_base.icmp6_cksum = 0;
         icmp6->icmp6_base.icmp6_cksum =
-            packet_csum_upperlayer6(l3, icmp6, IPPROTO_ICMPV6,
-                                    tail - (char *) icmp6 - pad);
+            ip_csum_upperlayer6(l3, icmp6, IPPROTO_ICMPV6,
+                                tail - (char *) icmp6 - pad);
     }
 
     pkt->l3_ofs = orig_l3_ofs;
@@ -1780,10 +1780,10 @@ checksum_valid(const struct conn_key *key, const void *data, size_t size,
     bool valid;
 
     if (key->dl_type == htons(ETH_TYPE_IP)) {
-        uint32_t csum = packet_csum_pseudoheader(l3);
+        uint32_t csum = ip_csum_pseudoheader(l3);
         valid = (csum_finish(csum_continue(csum, data, size)) == 0);
     } else if (key->dl_type == htons(ETH_TYPE_IPV6)) {
-        valid = (packet_csum_upperlayer6(l3, data, key->nw_proto, size) == 0);
+        valid = (ip_csum_upperlayer6(l3, data, key->nw_proto, size) == 0);
     } else {
         valid = false;
     }
@@ -3790,10 +3790,10 @@ handle_ftp_ctl(struct conntrack *ct, const struct conn_lookup_ctx *ctx,
     } else {
         th->tcp_csum = 0;
         if (ctx->key.dl_type == htons(ETH_TYPE_IPV6)) {
-            th->tcp_csum = packet_csum_upperlayer6(nh6, th, ctx->key.nw_proto,
+            th->tcp_csum = ip_csum_upperlayer6(nh6, th, ctx->key.nw_proto,
                                dp_packet_l4_size(pkt));
         } else {
-            uint32_t tcp_csum = packet_csum_pseudoheader(l3_hdr);
+            uint32_t tcp_csum = ip_csum_pseudoheader(l3_hdr);
             th->tcp_csum = csum_finish(
                  csum_continue(tcp_csum, th, dp_packet_l4_size(pkt)));
         }

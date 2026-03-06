@@ -27,8 +27,8 @@
 #include "dpif-netdev-perf.h"
 #include "dpif-provider.h"
 #include "flow.h"
+#include "net-proto.h"
 #include "ovs-thread.h"
-#include "packets.h"
 #include "pvector.h"
 
 VLOG_DEFINE_THIS_MODULE(dpif_lookup_generic);

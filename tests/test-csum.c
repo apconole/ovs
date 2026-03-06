@@ -198,13 +198,13 @@ test_pseudo(void)
         .ip_dst = { .hi = htons(0x1400), .lo = htons(0x0001) }
     };
 
-    csum = csum_finish(packet_csum_pseudoheader(&ip));
+    csum = csum_finish(ip_csum_pseudoheader(&ip));
     assert(csum == htons(0xd779));
 
     /* And also test something totally different to check for
      * corner cases. */
     memset(&ip, 0xff, sizeof ip);
-    csum = csum_finish(packet_csum_pseudoheader(&ip));
+    csum = csum_finish(ip_csum_pseudoheader(&ip));
     assert(csum == htons(0xff3c));
 
     mark('#');

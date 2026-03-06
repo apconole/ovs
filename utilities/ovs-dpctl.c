@@ -37,7 +37,6 @@
 #include "dpctl.h"
 #include "fatal-signal.h"
 #include "odp-util.h"
-#include "packets.h"
 #include "timeval.h"
 #include "util.h"
 #include "openvswitch/vlog.h"

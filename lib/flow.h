@@ -28,6 +28,7 @@
 #include "openflow/nicira-ext.h"
 #include "openflow/openflow.h"
 #include "openvswitch/flow.h"
+#include "net-proto.h"
 #include "packets.h"
 #include "hash.h"
 #include "util.h"

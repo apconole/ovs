@@ -7277,10 +7277,10 @@ netdev_linux_prepend_vnet_hdr(struct dp_packet *b, int mtu)
             ovs_be16 csum = 0;
 
             if (IP_VER(ip_hdr->ip_ihl_ver) == 4) {
-                csum = ~csum_finish(packet_csum_pseudoheader(ip_hdr));
+                csum = ~csum_finish(ip_csum_pseudoheader(ip_hdr));
             } else if (IP_VER(ip_hdr->ip_ihl_ver) == 6) {
                 const struct ovs_16aligned_ip6_hdr *ip6_hdr = l3_off;
-                csum = ~csum_finish(packet_csum_pseudoheader6(ip6_hdr));
+                csum = ~csum_finish(ip_csum_pseudoheader6(ip6_hdr));
             }
 
             tcp_hdr->tcp_csum = csum;
@@ -7294,10 +7294,10 @@ netdev_linux_prepend_vnet_hdr(struct dp_packet *b, int mtu)
             ovs_be16 csum = 0;
 
             if (IP_VER(ip_hdr->ip_ihl_ver) == 4) {
-                csum = ~csum_finish(packet_csum_pseudoheader(ip_hdr));
+                csum = ~csum_finish(ip_csum_pseudoheader(ip_hdr));
             } else if (IP_VER(ip_hdr->ip_ihl_ver) == 6) {
                 const struct ovs_16aligned_ip6_hdr *ip6_hdr = l3_off;
-                csum = ~csum_finish(packet_csum_pseudoheader6(ip6_hdr));
+                csum = ~csum_finish(ip_csum_pseudoheader6(ip6_hdr));
             }
 
             udp_hdr->udp_csum = csum;

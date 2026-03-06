@@ -924,7 +924,7 @@ dpif_flow_stats_format(const struct dpif_flow_stats *stats, struct ds *s)
     }
     if (stats->tcp_flags) {
         ds_put_cstr(s, ", flags:");
-        packet_format_tcp_flags(s, stats->tcp_flags);
+        format_tcp_flags(s, stats->tcp_flags);
     }
 }
 

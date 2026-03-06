@@ -3280,12 +3280,12 @@ packet_expand(struct dp_packet *p, const struct flow *flow, size_t size)
 
             ip->ip_tot_len = htons(p->l4_ofs - p->l3_ofs + l4_len);
             dp_packet_ip_set_header_csum(p, false);
-            pseudo_hdr_csum = packet_csum_pseudoheader(ip);
+            pseudo_hdr_csum = ip_csum_pseudoheader(ip);
         } else { /* ETH_TYPE_IPV6 */
             struct ovs_16aligned_ip6_hdr *nh = dp_packet_l3(p);
 
             nh->ip6_plen = htons(l4_len);
-            pseudo_hdr_csum = packet_csum_pseudoheader6(nh);
+            pseudo_hdr_csum = ip_csum_pseudoheader6(nh);
         }
 
         if ((!(flow->nw_frag & FLOW_NW_FRAG_ANY)
@@ -3383,7 +3383,7 @@ flow_compose(struct dp_packet *p, const struct flow *flow,
             dp_packet_ip_checksum_set_good(p);
         }
 
-        pseudo_hdr_csum = packet_csum_pseudoheader(ip);
+        pseudo_hdr_csum = ip_csum_pseudoheader(ip);
         flow_compose_l4_csum(p, flow, pseudo_hdr_csum);
     } else if (flow->dl_type == htons(ETH_TYPE_IPV6)) {
         struct ovs_16aligned_ip6_hdr *nh;
@@ -3404,7 +3404,7 @@ flow_compose(struct dp_packet *p, const struct flow *flow,
         nh = dp_packet_l3(p);
         nh->ip6_plen = htons(l4_len);
 
-        pseudo_hdr_csum = packet_csum_pseudoheader6(nh);
+        pseudo_hdr_csum = ip_csum_pseudoheader6(nh);
         flow_compose_l4_csum(p, flow, pseudo_hdr_csum);
     } else if (flow->dl_type == htons(ETH_TYPE_ARP) ||
                flow->dl_type == htons(ETH_TYPE_RARP)) {

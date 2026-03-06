@@ -4616,12 +4616,12 @@ format_odp_key_attr__(const struct nlattr *a, const struct nlattr *ma,
     }
     case OVS_KEY_ATTR_TCP_FLAGS:
         if (!is_exact) {
-            format_flags_masked(ds, NULL, packet_tcp_flag_to_string,
+            format_flags_masked(ds, NULL, tcp_flag_to_string,
                                 ntohs(nl_attr_get_be16(a)),
                                 TCP_FLAGS(nl_attr_get_be16(ma)),
                                 TCP_FLAGS(OVS_BE16_MAX));
         } else {
-            format_flags(ds, packet_tcp_flag_to_string,
+            format_flags(ds, tcp_flag_to_string,
                          ntohs(nl_attr_get_be16(a)), '|');
         }
         break;
@@ -5219,7 +5219,7 @@ scan_tcp_flags(const char *s, ovs_be16 *key, ovs_be16 *mask)
     uint32_t flags, fmask;
     int n;
 
-    n = parse_odp_flags(s, packet_tcp_flag_to_string, &flags,
+    n = parse_odp_flags(s, tcp_flag_to_string, &flags,
                         TCP_FLAGS(OVS_BE16_MAX), mask ? &fmask : NULL);
     if (n >= 0) {
         *key = htons(flags);

@@ -2902,7 +2902,7 @@ update_mcast_snooping_table6__(const struct xlate_ctx *ctx,
     mld = dp_packet_at(packet, offset, MLD_HEADER_LEN);
 
     if (!mld ||
-        packet_csum_upperlayer6(dp_packet_l3(packet),
+        ip_csum_upperlayer6(dp_packet_l3(packet),
                                 mld, IPPROTO_ICMPV6,
                                 dp_packet_l4_size(packet)) != 0) {
         xlate_report_debug(ctx, OFT_DETAIL, "multicast snooping received "

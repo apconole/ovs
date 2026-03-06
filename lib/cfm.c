@@ -27,6 +27,7 @@
 #include "openvswitch/dynamic-string.h"
 #include "flow.h"
 #include "hash.h"
+#include "net-proto.h"
 #include "openvswitch/hmap.h"
 #include "netdev.h"
 #include "ovs-atomic.h"

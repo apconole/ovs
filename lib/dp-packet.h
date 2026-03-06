@@ -28,6 +28,7 @@
 #include "csum.h"
 #include "netdev-afxdp.h"
 #include "netdev-dpdk.h"
+#include "net-proto.h"
 #include "openvswitch/list.h"
 #include "packets.h"
 #include "util.h"
