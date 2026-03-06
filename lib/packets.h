@@ -90,14 +90,6 @@ flow_tnl_copy__(struct flow_tnl *dst, const struct flow_tnl *src)
     memcpy(dst, src, flow_tnl_size(src));
 }
 
-static inline bool
-flow_tnl_equal(const struct flow_tnl *a, const struct flow_tnl *b)
-{
-    size_t a_size = flow_tnl_size(a);
-
-    return a_size == flow_tnl_size(b) && !memcmp(a, b, a_size);
-}
-
 /* Datapath packet metadata */
 struct pkt_metadata {
 PADDED_MEMBERS_CACHELINE_MARKER(CACHE_LINE_SIZE, cacheline0,
