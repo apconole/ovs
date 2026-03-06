@@ -220,37 +220,6 @@ void pop_eth(struct dp_packet *packet);
 void push_nsh(struct dp_packet *packet, const struct nsh_hdr *nsh_hdr_src);
 bool pop_nsh(struct dp_packet *packet);
 
-/* Connection states.
- *
- * Names like CS_RELATED are bit values, e.g. 1 << 2.
- * Names like CS_RELATED_BIT are bit indexes, e.g. 2. */
-#define CS_STATES                               \
-    CS_STATE(NEW,         0, "new")             \
-    CS_STATE(ESTABLISHED, 1, "est")             \
-    CS_STATE(RELATED,     2, "rel")             \
-    CS_STATE(REPLY_DIR,   3, "rpl")             \
-    CS_STATE(INVALID,     4, "inv")             \
-    CS_STATE(TRACKED,     5, "trk")             \
-    CS_STATE(SRC_NAT,     6, "snat")            \
-    CS_STATE(DST_NAT,     7, "dnat")
-
-enum {
-#define CS_STATE(ENUM, INDEX, NAME) \
-    CS_##ENUM = 1 << INDEX, \
-    CS_##ENUM##_BIT = INDEX,
-    CS_STATES
-#undef CS_STATE
-};
-
-/* Undefined connection state bits. */
-enum {
-#define CS_STATE(ENUM, INDEX, NAME) +CS_##ENUM
-    CS_SUPPORTED_MASK = CS_STATES
-#undef CS_STATE
-};
-#define CS_UNSUPPORTED_MASK  (~(uint32_t)CS_SUPPORTED_MASK)
-
-
 void *eth_compose(struct dp_packet *, const struct eth_addr eth_dst,
                   const struct eth_addr eth_src, uint16_t eth_type,
                   size_t size);

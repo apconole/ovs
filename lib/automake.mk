@@ -99,6 +99,7 @@ lib_libopenvswitch_la_SOURCES = \
 	lib/cooperative-multitasking-private.h \
 	lib/coverage.c \
 	lib/coverage.h \
+	lib/ct-state.h \
 	lib/cpu.c \
 	lib/cpu.h \
 	lib/crc32c.c \

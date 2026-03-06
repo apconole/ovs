@@ -25,6 +25,7 @@
 #include "bitmap.h"
 #include "byte-order.h"
 #include "openvswitch/compiler.h"
+#include "ct-state.h"
 #include "openflow/nicira-ext.h"
 #include "openflow/openflow.h"
 #include "openvswitch/flow.h"
