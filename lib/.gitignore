@@ -19,4 +19,5 @@
 /vswitch-idl.h
 /vswitch-idl.ovsidl
 /libopenvswitch.pc
+/libovscommon.pc
 /libsflow.pc

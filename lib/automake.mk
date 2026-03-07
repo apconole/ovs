@@ -5,15 +5,267 @@
 # notice and this notice are preserved.  This file is offered as-is,
 # without warranty of any kind.
 
-lib_LTLIBRARIES += lib/libopenvswitch.la
+# libovscommon: The common libraries used by any/all included utilities.
+# Contains the container structures (maps, lists, etc), threading, i/o,
+# logging, ovsdb-client, etc.
+lib_LTLIBRARIES += lib/libovscommon.la
 
-lib_libopenvswitch_la_LIBADD = $(SSL_LIBS)
-lib_libopenvswitch_la_LIBADD += $(CAPNG_LDADD)
-
+lib_libovscommon_la_LIBADD = $(SSL_LIBS)
+lib_libovscommon_la_LIBADD += $(CAPNG_LDADD)
 
 if WIN32
-lib_libopenvswitch_la_LIBADD += ${PTHREAD_LIBS}
+lib_libovscommon_la_LIBADD += ${PTHREAD_LIBS}
 endif
+
+lib_libovscommon_la_LDFLAGS = \
+        $(OVS_LTINFO) \
+        -Wl,--version-script=$(top_builddir)/lib/libovscommon.sym \
+        $(AM_LDFLAGS)
+
+lib_libovscommon_la_SOURCES = \
+	lib/aes128.c \
+	lib/aes128.h \
+	lib/async-append.h \
+	lib/backtrace.c \
+	lib/backtrace.h \
+	lib/bitmap.h \
+	lib/byte-order.h \
+	lib/byteq.c \
+	lib/byteq.h \
+	lib/ccmap.c \
+	lib/ccmap.h \
+	lib/cmap.c \
+	lib/cmap.h \
+	lib/colors.c \
+	lib/colors.h \
+	lib/command-line.c \
+	lib/command-line.h \
+	lib/compiler.h \
+	lib/cooperative-multitasking.c \
+	lib/cooperative-multitasking.h \
+	lib/cooperative-multitasking-private.h \
+	lib/coverage.c \
+	lib/coverage.h \
+	lib/cpu.c \
+	lib/cpu.h \
+	lib/crc32c.c \
+	lib/crc32c.h \
+	lib/csum.c \
+	lib/csum.h \
+	lib/daemon.c \
+	lib/daemon.h \
+	lib/daemon-private.h \
+	lib/db-ctl-base.c \
+	lib/db-ctl-base.h \
+	lib/dynamic-string.c \
+	lib/entropy.c \
+	lib/entropy.h \
+	lib/fat-rwlock.c \
+	lib/fat-rwlock.h \
+	lib/fatal-signal.c \
+	lib/fatal-signal.h \
+	lib/guarded-list.c \
+	lib/guarded-list.h \
+	lib/hash.c \
+	lib/hash.h \
+	lib/hash-aarch64.h \
+	lib/heap.c \
+	lib/heap.h \
+	lib/hindex.c \
+	lib/hindex.h \
+	lib/hmap.c \
+	lib/hmapx.c \
+	lib/hmapx.h \
+	lib/id-fpool.c \
+	lib/id-fpool.h \
+	lib/id-pool.c \
+	lib/id-pool.h \
+	lib/jhash.c \
+	lib/jhash.h \
+	lib/json.c \
+	lib/json.h \
+	lib/jsonrpc.c \
+	lib/jsonrpc.h \
+	lib/latch.h \
+	lib/lockfile.c \
+	lib/lockfile.h \
+	lib/memory.c \
+	lib/memory.h \
+	lib/mov-avg.h \
+	lib/mpsc-queue.c \
+	lib/mpsc-queue.h \
+	lib/namemap.c \
+	lib/object-collection.c \
+	lib/object-collection.h \
+	lib/ovs-atomic-c++.h \
+	lib/ovs-atomic-c11.h \
+	lib/ovs-atomic-clang.h \
+	lib/ovs-atomic-flag-gcc4.7+.h \
+	lib/ovs-atomic-gcc4+.h \
+	lib/ovs-atomic-gcc4.7+.h \
+	lib/ovs-atomic-i586.h \
+	lib/ovs-atomic-locked.c \
+	lib/ovs-atomic-locked.h \
+	lib/ovs-atomic-msvc.h \
+	lib/ovs-atomic-pthreads.h \
+	lib/ovs-atomic-x86_64.h \
+	lib/ovs-atomic.h \
+	lib/ovs-numa.c \
+	lib/ovs-numa.h \
+	lib/ovs-rcu.c \
+	lib/ovs-rcu.h \
+	lib/ovs-replay.c \
+	lib/ovs-replay.h \
+	lib/ovs-thread.c \
+	lib/ovs-thread.h \
+	lib/ovsdb-condition.h \
+	lib/ovsdb-condition.c \
+	lib/ovsdb-cs.c \
+	lib/ovsdb-cs.h \
+	lib/ovsdb-data.c \
+	lib/ovsdb-data.h \
+	lib/ovsdb-error.c \
+	lib/ovsdb-error.h \
+	lib/ovsdb-idl-provider.h \
+	lib/ovsdb-idl.c \
+	lib/ovsdb-idl.h \
+	lib/ovsdb-map-op.c \
+	lib/ovsdb-map-op.h \
+	lib/ovsdb-parser.c \
+	lib/ovsdb-parser.h \
+	lib/ovsdb-session.c \
+	lib/ovsdb-session.h \
+	lib/ovsdb-set-op.c \
+	lib/ovsdb-set-op.h \
+	lib/ovsdb-types.c \
+	lib/ovsdb-types.h \
+	lib/perf-counter.h \
+	lib/perf-counter.c \
+	lib/net-proto.c \
+	lib/net-proto.h \
+	lib/ofpbuf.c \
+	lib/poll-loop.c \
+	lib/process.c \
+	lib/process.h \
+	lib/pvector.c \
+	lib/pvector.h \
+	lib/random.c \
+	lib/random.h \
+	lib/rculist.h \
+	lib/reconnect.c \
+	lib/reconnect.h \
+	lib/sat-math.h \
+	lib/seq.c \
+	lib/seq.h \
+	lib/sha1.c \
+	lib/sha1.h \
+	lib/shash.c \
+	lib/simap.c \
+	lib/simap.h \
+	lib/skiplist.c \
+	lib/skiplist.h \
+	lib/smap.c \
+	lib/smap.h \
+	lib/socket-util.c \
+	lib/socket-util.h \
+	lib/sort.c \
+	lib/sort.h \
+	lib/sset.c \
+	lib/sset.h \
+	lib/stdio.c \
+	lib/stopwatch.h \
+	lib/stopwatch.c \
+	lib/stream-fd.c \
+	lib/stream-fd.h \
+	lib/stream-provider.h \
+	lib/stream-replay.c \
+	lib/stream-ssl.h \
+	lib/stream-tcp.c \
+	lib/stream.c \
+	lib/stream.h \
+	lib/string.c \
+	lib/svec.c \
+	lib/svec.h \
+	lib/syslog-direct.c \
+	lib/syslog-direct.h \
+	lib/syslog-libc.c \
+	lib/syslog-libc.h \
+	lib/syslog-null.c \
+	lib/syslog-null.h \
+	lib/syslog-provider.h \
+	lib/table.c \
+	lib/table.h \
+	lib/timer.c \
+	lib/timer.h \
+	lib/timeval.c \
+	lib/timeval.h \
+	lib/token-bucket.c \
+	lib/unicode.c \
+	lib/unicode.h \
+	lib/unixctl.c \
+	lib/unixctl.h \
+	lib/util.c \
+	lib/util.h \
+	lib/uuid.c \
+	lib/uuid.h \
+	lib/uuidset.c \
+	lib/uuidset.h \
+	lib/valgrind.h \
+	lib/vlog.c
+
+if WIN32
+lib_libovscommon_la_SOURCES += \
+	lib/daemon-windows.c \
+	lib/getopt_long.c \
+	lib/getrusage-windows.c \
+	lib/latch-windows.c \
+	lib/stream-windows.c \
+	lib/strsep.c
+else
+lib_libovscommon_la_SOURCES += \
+	lib/daemon-unix.c \
+	lib/latch-unix.c \
+	lib/signals.c \
+	lib/signals.h \
+	lib/socket-util-unix.c \
+	lib/stream-unix.c
+endif
+
+if HAVE_POSIX_AIO
+lib_libovscommon_la_SOURCES += lib/async-append-aio.c
+else
+lib_libovscommon_la_SOURCES += lib/async-append-null.c
+endif
+
+if HAVE_OPENSSL
+lib_libovscommon_la_SOURCES += lib/stream-ssl.c lib/dhparams.c
+else
+lib_libovscommon_la_SOURCES += lib/stream-nossl.c
+endif
+
+lib_libovscommon_la_SOURCES += lib/dns-resolve.h
+if HAVE_UNBOUND
+lib_libovscommon_la_SOURCES += lib/dns-resolve.c
+else
+lib_libovscommon_la_SOURCES += lib/dns-resolve-stub.c
+endif
+
+nodist_lib_libovscommon_la_SOURCES = \
+	lib/dirs.c \
+	lib/ovsdb-server-idl.c \
+	lib/ovsdb-server-idl.h \
+	lib/vswitch-idl.c \
+	lib/vswitch-idl.h
+CLEANFILES += $(nodist_lib_libovscommon_la_SOURCES)
+
+pkgconfig_DATA += lib/libovscommon.pc
+
+# libopenvswitch: switching datapath library.
+# Contains the openflow handling, flow processing, netdev, dpif, etc.
+
+lib_LTLIBRARIES += lib/libopenvswitch.la
+
+lib_libopenvswitch_la_LIBADD = lib/libovscommon.la
 
 lib_libopenvswitch_la_LDFLAGS = \
         $(OVS_LTINFO) \
@@ -57,33 +309,15 @@ endif # HAVE_AVX512F
 
 # Build core vswitch libraries as before
 lib_libopenvswitch_la_SOURCES = \
-	lib/aes128.c \
-	lib/aes128.h \
-	lib/async-append.h \
-	lib/backtrace.c \
-	lib/backtrace.h \
 	lib/bfd.c \
 	lib/bfd.h \
-	lib/bitmap.h \
 	lib/bundle.c \
 	lib/bundle.h \
-	lib/byte-order.h \
-	lib/byteq.c \
-	lib/byteq.h \
 	lib/cfm.c \
 	lib/cfm.h \
 	lib/classifier.c \
 	lib/classifier.h \
 	lib/classifier-private.h \
-	lib/ccmap.c \
-	lib/ccmap.h \
-	lib/cmap.c \
-	lib/cmap.h \
-	lib/colors.c \
-	lib/colors.h \
-	lib/command-line.c \
-	lib/command-line.h \
-	lib/compiler.h \
 	lib/connectivity.c \
 	lib/connectivity.h \
 	lib/conntrack-icmp.c \
@@ -94,37 +328,23 @@ lib_libopenvswitch_la_SOURCES = \
 	lib/conntrack-other.c \
 	lib/conntrack.c \
 	lib/conntrack.h \
-	lib/cooperative-multitasking.c \
-	lib/cooperative-multitasking.h \
-	lib/cooperative-multitasking-private.h \
-	lib/coverage.c \
-	lib/coverage.h \
-	lib/ct-state.h \
-	lib/cpu.c \
-	lib/cpu.h \
-	lib/crc32c.c \
-	lib/crc32c.h \
-	lib/csum.c \
-	lib/csum.h \
 	lib/ct-dpif.c \
 	lib/ct-dpif.h \
-	lib/daemon.c \
-	lib/daemon.h \
-	lib/daemon-private.h \
-	lib/db-ctl-base.c \
-	lib/db-ctl-base.h \
+	lib/ct-state.h \
 	lib/dhcp.h \
 	lib/dummy.c \
 	lib/dummy.h \
 	lib/dhparams.h \
 	lib/dirs.h \
-	lib/dpctl.c \
-	lib/dpctl.h \
 	lib/dp-packet.h \
 	lib/dp-packet.c \
 	lib/dp-packet-gso.c \
 	lib/dp-packet-gso.h \
+	lib/pcap-file.c \
+	lib/pcap-file.h \
 	lib/dpdk.h \
+	lib/dpctl.c \
+	lib/dpctl.h \
 	lib/dpif-netdev-extract-study.c \
 	lib/dpif-netdev-lookup.h \
 	lib/dpif-netdev-lookup.c \
@@ -151,66 +371,26 @@ lib_libopenvswitch_la_SOURCES = \
 	lib/dpif-provider.h \
 	lib/dpif.c \
 	lib/dpif.h \
-	lib/heap.c \
-	lib/heap.h \
-	lib/dynamic-string.c \
-	lib/entropy.c \
-	lib/entropy.h \
-	lib/fat-rwlock.c \
-	lib/fat-rwlock.h \
-	lib/fatal-signal.c \
-	lib/fatal-signal.h \
 	lib/flow.c \
 	lib/flow.h \
-	lib/guarded-list.c \
-	lib/guarded-list.h \
-	lib/hash.c \
-	lib/hash.h \
-	lib/hash-aarch64.h \
-	lib/hindex.c \
-	lib/hindex.h \
-	lib/hmap.c \
-	lib/hmapx.c \
-	lib/hmapx.h \
-	lib/id-fpool.c \
-	lib/id-fpool.h \
-	lib/id-pool.c \
-	lib/id-pool.h \
-	lib/if-notifier-manual.c \
 	lib/if-notifier.h \
+	lib/if-notifier-manual.c \
 	lib/ipf.c \
 	lib/ipf.h \
-	lib/jhash.c \
-	lib/jhash.h \
-	lib/json.c \
-	lib/json.h \
-	lib/jsonrpc.c \
-	lib/jsonrpc.h \
 	lib/lacp.c \
 	lib/lacp.h \
-	lib/latch.h \
 	lib/learn.c \
 	lib/learn.h \
 	lib/learning-switch.c \
 	lib/learning-switch.h \
-	lib/lockfile.c \
-	lib/lockfile.h \
 	lib/mac-learning.c \
 	lib/mac-learning.h \
 	lib/match.c \
 	lib/mcast-snooping.c \
 	lib/mcast-snooping.h \
-	lib/memory.c \
-	lib/memory.h \
 	lib/meta-flow.c \
-	lib/mov-avg.h \
-	lib/mpsc-queue.c \
-	lib/mpsc-queue.h \
 	lib/multipath.c \
 	lib/multipath.h \
-	lib/namemap.c \
-	lib/net-proto.h \
-	lib/net-proto.c \
 	lib/netdev-dpdk.h \
 	lib/netdev-dummy.c \
 	lib/netdev-provider.h \
@@ -225,8 +405,6 @@ lib_libopenvswitch_la_SOURCES = \
 	lib/netnsid.h \
 	lib/nx-match.c \
 	lib/nx-match.h \
-	lib/object-collection.c \
-	lib/object-collection.h \
 	lib/odp-execute.c \
 	lib/odp-execute.h \
 	lib/odp-execute-private.c \
@@ -258,145 +436,31 @@ lib_libopenvswitch_la_SOURCES = \
 	lib/ofp-util.c \
 	lib/ofp-version-opt.h \
 	lib/ofp-version-opt.c \
-	lib/ofpbuf.c \
-	lib/ovs-atomic-c++.h \
-	lib/ovs-atomic-c11.h \
-	lib/ovs-atomic-clang.h \
-	lib/ovs-atomic-flag-gcc4.7+.h \
-	lib/ovs-atomic-gcc4+.h \
-	lib/ovs-atomic-gcc4.7+.h \
-	lib/ovs-atomic-i586.h \
-	lib/ovs-atomic-locked.c \
-	lib/ovs-atomic-locked.h \
-	lib/ovs-atomic-msvc.h \
-	lib/ovs-atomic-pthreads.h \
-	lib/ovs-atomic-x86_64.h \
-	lib/ovs-atomic.h \
 	lib/ovs-lldp.c \
 	lib/ovs-lldp.h \
-	lib/ovs-numa.c \
-	lib/ovs-numa.h \
-	lib/ovs-rcu.c \
-	lib/ovs-rcu.h \
-	lib/ovs-replay.c \
-	lib/ovs-replay.h \
 	lib/ovs-router.h \
 	lib/ovs-router.c \
-	lib/ovs-thread.c \
-	lib/ovs-thread.h \
-	lib/ovsdb-cs.c \
-	lib/ovsdb-cs.h \
-	lib/ovsdb-data.c \
-	lib/ovsdb-data.h \
-	lib/ovsdb-error.c \
-	lib/ovsdb-error.h \
-	lib/ovsdb-idl-provider.h \
-	lib/ovsdb-idl.c \
-	lib/ovsdb-idl.h \
-	lib/ovsdb-map-op.c \
-	lib/ovsdb-map-op.h \
-	lib/ovsdb-set-op.c \
-	lib/ovsdb-set-op.h \
-	lib/ovsdb-condition.h \
-	lib/ovsdb-condition.c \
-	lib/ovsdb-parser.c \
-	lib/ovsdb-parser.h \
-	lib/ovsdb-session.c \
-	lib/ovsdb-session.h \
-	lib/ovsdb-types.c \
-	lib/ovsdb-types.h \
 	lib/ox-stat.c \
 	lib/ox-stat.h \
-	lib/pcap-file.c \
-	lib/pcap-file.h \
-	lib/perf-counter.h \
-	lib/perf-counter.c \
-	lib/stopwatch.h \
-	lib/stopwatch.c \
-	lib/poll-loop.c \
-	lib/process.c \
-	lib/process.h \
-	lib/pvector.c \
-	lib/pvector.h \
-	lib/random.c \
-	lib/random.h \
 	lib/rconn.c \
-	lib/rculist.h \
-	lib/reconnect.c \
-	lib/reconnect.h \
 	lib/rstp.c \
 	lib/rstp.h \
 	lib/rstp-common.h \
 	lib/rstp-state-machines.c \
 	lib/rstp-state-machines.h \
-	lib/sat-math.h \
-	lib/seq.c \
-	lib/seq.h \
-	lib/sha1.c \
-	lib/sha1.h \
-	lib/shash.c \
-	lib/simap.c \
-	lib/simap.h \
-	lib/skiplist.c \
-	lib/skiplist.h \
-	lib/smap.c \
-	lib/smap.h \
-	lib/socket-util.c \
-	lib/socket-util.h \
-	lib/sort.c \
-	lib/sort.h \
-	lib/sset.c \
-	lib/sset.h \
 	lib/stp.c \
 	lib/stp.h \
-	lib/stream-fd.c \
-	lib/stream-fd.h \
-	lib/stream-provider.h \
-	lib/stream-replay.c \
-	lib/stream-ssl.h \
-	lib/stream-tcp.c \
-	lib/stream.c \
-	lib/stream.h \
-	lib/stdio.c \
-	lib/string.c \
-	lib/svec.c \
-	lib/svec.h \
-	lib/syslog-direct.c \
-	lib/syslog-direct.h \
-	lib/syslog-libc.c \
-	lib/syslog-libc.h \
-	lib/syslog-null.c \
-	lib/syslog-null.h \
-	lib/syslog-provider.h \
-	lib/table.c \
-	lib/table.h \
-	lib/timer.c \
-	lib/timer.h \
-	lib/timeval.c \
-	lib/timeval.h \
 	lib/tnl-neigh-cache.c \
 	lib/tnl-neigh-cache.h \
 	lib/tnl-ports.c \
 	lib/tnl-ports.h \
 	lib/netdev-native-tnl.c \
 	lib/netdev-native-tnl.h \
-	lib/token-bucket.c \
 	lib/tun-metadata.c \
 	lib/tun-metadata.h \
 	lib/unaligned.h \
-	lib/unicode.c \
-	lib/unicode.h \
-	lib/unixctl.c \
-	lib/unixctl.h \
 	lib/userspace-tso.c \
 	lib/userspace-tso.h \
-	lib/util.c \
-	lib/util.h \
-	lib/uuid.c \
-	lib/uuid.h \
-	lib/uuidset.c \
-	lib/uuidset.h \
-	lib/valgrind.h \
 	lib/vconn-provider.h \
 	lib/vconn-stream.c \
 	lib/vconn.c \
@@ -404,7 +468,6 @@ lib_libopenvswitch_la_SOURCES = \
 	lib/vl-mff-map.h \
 	lib/vlan-bitmap.c \
 	lib/vlan-bitmap.h \
-	lib/vlog.c \
 	lib/lldp/aa-structs.h \
 	lib/lldp/lldp.c \
 	lib/lldp/lldp-const.h \
@@ -416,55 +479,21 @@ lib_libopenvswitch_la_SOURCES = \
 
 if WIN32
 lib_libopenvswitch_la_SOURCES += \
-	lib/daemon-windows.c \
-	lib/getopt_long.c \
-	lib/getrusage-windows.c \
-	lib/latch-windows.c \
+	lib/dpif-netlink.c \
+	lib/dpif-netlink.h \
+	lib/dpif-netlink-rtnl.h \
+	lib/netdev-windows.c \
+	lib/netlink-conntrack.c \
+	lib/netlink-conntrack.h \
+	lib/netlink-notifier.c \
+	lib/netlink-notifier.h \
+	lib/netlink-protocol.h \
+	lib/netlink-socket.c \
+	lib/netlink-socket.h \
 	lib/route-table-stub.c \
 	lib/if-notifier-stub.c \
-	lib/stream-windows.c \
-	lib/strsep.c
-else
-lib_libopenvswitch_la_SOURCES += \
-	lib/daemon-unix.c \
-	lib/latch-unix.c \
-	lib/signals.c \
-	lib/signals.h \
-	lib/socket-util-unix.c \
-	lib/stream-unix.c
-endif
-
-EXTRA_DIST += \
-	lib/stdio.h.in \
-	lib/string.h.in
-
-nodist_lib_libopenvswitch_la_SOURCES = \
-	lib/dirs.c \
-	lib/ovsdb-server-idl.c \
-	lib/ovsdb-server-idl.h \
-	lib/vswitch-idl.c \
-	lib/vswitch-idl.h
-CLEANFILES += $(nodist_lib_libopenvswitch_la_SOURCES)
-
-lib_LTLIBRARIES += lib/libsflow.la
-lib_libsflow_la_LDFLAGS = \
-        $(OVS_LTINFO) \
-        -Wl,--version-script=$(top_builddir)/lib/libsflow.sym \
-        $(AM_LDFLAGS)
-lib_libsflow_la_SOURCES = \
-	lib/sflow_api.h \
-	lib/sflow.h \
-	lib/sflow_agent.c \
-	lib/sflow_sampler.c \
-	lib/sflow_poller.c \
-	lib/sflow_receiver.c
-lib_libsflow_la_CPPFLAGS = $(AM_CPPFLAGS)
-lib_libsflow_la_CFLAGS = $(AM_CFLAGS) -D_BSD_SOURCE -D_DEFAULT_SOURCE
-if HAVE_WNO_UNUSED
-lib_libsflow_la_CFLAGS += -Wno-unused
-endif
-if HAVE_WNO_UNUSED_PARAMETER
-lib_libsflow_la_CFLAGS += -Wno-unused-parameter
+	lib/wmi.c \
+	lib/wmi.h
 endif
 
 if LINUX
@@ -515,29 +544,6 @@ lib_libopenvswitch_la_SOURCES += \
 	lib/dpdk-stub.c
 endif
 
-if WIN32
-lib_libopenvswitch_la_SOURCES += \
-	lib/dpif-netlink.c \
-	lib/dpif-netlink.h \
-	lib/dpif-netlink-rtnl.h \
-	lib/netdev-windows.c \
-	lib/netlink-conntrack.c \
-	lib/netlink-conntrack.h \
-	lib/netlink-notifier.c \
-	lib/netlink-notifier.h \
-	lib/netlink-protocol.h \
-	lib/netlink-socket.c \
-	lib/netlink-socket.h \
-	lib/wmi.c \
-	lib/wmi.h
-endif
-
-if HAVE_POSIX_AIO
-lib_libopenvswitch_la_SOURCES += lib/async-append-aio.c
-else
-lib_libopenvswitch_la_SOURCES += lib/async-append-null.c
-endif
-
 if HAVE_IF_DL
 lib_libopenvswitch_la_SOURCES += \
 	lib/if-notifier-bsd.c \
@@ -547,10 +553,13 @@ lib_libopenvswitch_la_SOURCES += \
 	lib/route-table-bsd.c
 endif
 
+EXTRA_DIST += \
+	lib/stdio.h.in \
+	lib/string.h.in
+
+
 .PHONY: generate-dhparams-c
 if HAVE_OPENSSL
-lib_libopenvswitch_la_SOURCES += lib/stream-ssl.c lib/dhparams.c
-
 # Manually regenerates lib/dhparams.c.  Not normally necessary since
 # lib/dhparams.c is part of the repository and doesn't normally need
 # updates.
@@ -558,15 +567,27 @@ generate-dhparams-c:
 	$(AM_V_GEN)cd $(srcdir) && \
 	build-aux/generate-dhparams-c > lib/dhparams.c.tmp && \
 	mv lib/dhparams.c.tmp lib/dhparams.c
-else
-lib_libopenvswitch_la_SOURCES += lib/stream-nossl.c
 endif
 
-lib_libopenvswitch_la_SOURCES += lib/dns-resolve.h
-if HAVE_UNBOUND
-lib_libopenvswitch_la_SOURCES += lib/dns-resolve.c
-else
-lib_libopenvswitch_la_SOURCES += lib/dns-resolve-stub.c
+lib_LTLIBRARIES += lib/libsflow.la
+lib_libsflow_la_LDFLAGS = \
+        $(OVS_LTINFO) \
+        -Wl,--version-script=$(top_builddir)/lib/libsflow.sym \
+        $(AM_LDFLAGS)
+lib_libsflow_la_SOURCES = \
+	lib/sflow_api.h \
+	lib/sflow.h \
+	lib/sflow_agent.c \
+	lib/sflow_sampler.c \
+	lib/sflow_poller.c \
+	lib/sflow_receiver.c
+lib_libsflow_la_CPPFLAGS = $(AM_CPPFLAGS)
+lib_libsflow_la_CFLAGS = $(AM_CFLAGS) -D_BSD_SOURCE -D_DEFAULT_SOURCE
+if HAVE_WNO_UNUSED
+lib_libsflow_la_CFLAGS += -Wno-unused
+endif
+if HAVE_WNO_UNUSED_PARAMETER
+lib_libsflow_la_CFLAGS += -Wno-unused-parameter
 endif
 
 pkgconfig_DATA += \
@@ -649,7 +670,7 @@ lib/meta-flow.inc: $(srcdir)/build-aux/extract-ofp-fields include/openvswitch/me
 	$(AM_V_GEN)$(run_python) $< meta-flow $(srcdir)/include/openvswitch/meta-flow.h > $@.tmp
 	$(AM_V_at)mv $@.tmp $@
 lib/meta-flow.lo: lib/meta-flow.inc
-lib/nx-match.inc: $(srcdir)/build-aux/extract-ofp-fields include/openvswitch/meta-flow.h 
+lib/nx-match.inc: $(srcdir)/build-aux/extract-ofp-fields include/openvswitch/meta-flow.h
 	$(AM_V_GEN)$(run_python) $< nx-match $(srcdir)/include/openvswitch/meta-flow.h > $@.tmp
 	$(AM_V_at)mv $@.tmp $@
 lib/nx-match.lo: lib/nx-match.inc

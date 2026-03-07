@@ -152,6 +152,7 @@ AC_CONFIG_FILES([
     ovsdb/libovsdb.sym
     ofproto/libofproto.sym
     lib/libsflow.sym
+    lib/libovscommon.sym
     lib/libopenvswitch.sym
     vtep/libvtep.sym])
 
@@ -212,6 +213,7 @@ AC_SUBST([OVS_LDFLAGS])
 
 AC_CONFIG_FILES(Makefile)
 AC_CONFIG_FILES(tests/atlocal)
+AC_CONFIG_FILES(lib/libovscommon.pc)
 AC_CONFIG_FILES(lib/libopenvswitch.pc)
 AC_CONFIG_FILES(lib/libsflow.pc)
 AC_CONFIG_FILES(ofproto/libofproto.pc)

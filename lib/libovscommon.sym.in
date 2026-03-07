@@ -1,0 +1,4 @@
+libovscommon_@LT_CURRENT@ {
+global:
+        *;
+};

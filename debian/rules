@@ -88,8 +88,8 @@ pybuild = \
 	export PKG_CONFIG_SYSTEM_INCLUDE_PATH=/; \
 	export PKG_CONFIG_SYSTEM_LIBRARY_PATH=/; \
 	enable_shared=no \
-	extra_cflags="`pkg-config --cflags libopenvswitch`" \
-	extra_libs="-Wl,-Bstatic -lopenvswitch -Wl,-Bdynamic `pkg-config --libs --static libopenvswitch`" \
+	extra_cflags="`pkg-config --cflags libovscommon`" \
+	extra_libs="-Wl,-Bstatic -lovscommon -Wl,-Bdynamic `pkg-config --libs --static libovscommon`" \
 	pybuild
 
 override_dh_auto_build:

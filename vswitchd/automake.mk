@@ -12,7 +12,8 @@ vswitchd_ovs_vswitchd_SOURCES = \
 vswitchd_ovs_vswitchd_LDADD = \
 	ofproto/libofproto.la \
 	lib/libsflow.la \
-	lib/libopenvswitch.la
+	lib/libopenvswitch.la \
+	lib/libovscommon.la
 vswitchd_ovs_vswitchd_LDFLAGS = $(AM_LDFLAGS) $(DPDK_vswitchd_LDFLAGS)
 MAN_ROOTS += vswitchd/ovs-vswitchd.8.in
 
