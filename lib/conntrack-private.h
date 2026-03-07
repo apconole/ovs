@@ -28,7 +28,6 @@
 #include "openvswitch/hmap.h"
 #include "openvswitch/list.h"
 #include "openvswitch/types.h"
-#include "packets.h"
 #include "rculist.h"
 #include "unaligned.h"
 #include "dp-packet.h"

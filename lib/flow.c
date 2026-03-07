@@ -36,7 +36,6 @@
 #include "openvswitch/match.h"
 #include "dp-packet.h"
 #include "openflow/openflow.h"
-#include "packets.h"
 #include "odp-util.h"
 #include "random.h"
 #include "unaligned.h"
@@ -44,6 +43,7 @@
 #include "openvswitch/nsh.h"
 #include "ovs-router.h"
 #include "lib/netdev-provider.h"
+#include "tun-metadata.h"
 #include "openvswitch/vlog.h"
 
 VLOG_DEFINE_THIS_MODULE(flow);

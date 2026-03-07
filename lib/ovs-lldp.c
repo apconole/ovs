@@ -41,7 +41,6 @@
 #include "lldp/lldpd-structs.h"
 #include "netdev.h"
 #include "openvswitch/types.h"
-#include "packets.h"
 #include "openvswitch/poll-loop.h"
 #include "smap.h"
 #include "unixctl.h"

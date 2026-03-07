@@ -42,7 +42,6 @@
 #include "compiler.h"
 #include "openvswitch/dynamic-string.h"
 #include "openvswitch/list.h"
-#include "packets.h"
 #include "timeval.h"
 
 VLOG_DEFINE_THIS_MODULE(lldpd);

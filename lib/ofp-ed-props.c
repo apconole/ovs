@@ -22,8 +22,6 @@
 #include "openvswitch/ofpbuf.h"
 #include "openvswitch/ofp-parse.h"
 #include "util.h"
-#include "lib/packets.h"
-
 
 enum ofperr
 decode_ed_prop(const struct ofp_ed_prop_header **ofp_prop,

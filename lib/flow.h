@@ -30,8 +30,8 @@
 #include "openflow/openflow.h"
 #include "openvswitch/flow.h"
 #include "net-proto.h"
-#include "packets.h"
 #include "hash.h"
+#include "odp-netlink.h"
 #include "util.h"
 
 struct dpif_flow_stats;
@@ -971,6 +971,161 @@ static inline bool is_ct_valid(const struct flow *flow,
         wc->masks.ct_state |= CS_VALID_MASK;
     }
     return flow->ct_state & CS_VALID_MASK;
+}
+
+/* Purely internal to OVS userspace. These flags should never be exposed to
+ * the outside world and so aren't included in the flags mask. */
+
+/* Tunnel information is in userspace datapath format. */
+#define FLOW_TNL_F_UDPIF (1 << 4)
+
+static inline bool
+flow_tnl_dst_is_set(const struct flow_tnl *tnl)
+{
+    return tnl->ip_dst || ipv6_addr_is_set(&tnl->ipv6_dst);
+}
+
+static inline bool
+flow_tnl_src_is_set(const struct flow_tnl *tnl)
+{
+    return tnl->ip_src || ipv6_addr_is_set(&tnl->ipv6_src);
+}
+
+struct in6_addr flow_tnl_dst(const struct flow_tnl *tnl);
+struct in6_addr flow_tnl_src(const struct flow_tnl *tnl);
+
+/* Returns an offset to 'src' covering all the meaningful fields in 'src'. */
+static inline size_t
+flow_tnl_size(const struct flow_tnl *src)
+{
+    if (!flow_tnl_dst_is_set(src)) {
+        /* Covers ip_dst and ipv6_dst only. */
+        return offsetof(struct flow_tnl, ip_src);
+    }
+    if (src->flags & FLOW_TNL_F_UDPIF) {
+        /* Datapath format, cover all options we have. */
+        return offsetof(struct flow_tnl, metadata.opts)
+            + src->metadata.present.len;
+    }
+    if (!src->metadata.present.map) {
+        /* No TLVs, opts is irrelevant. */
+        return offsetof(struct flow_tnl, metadata.opts);
+    }
+    /* Have decoded TLVs, opts is relevant. */
+    return sizeof *src;
+}
+
+/* Copy flow_tnl, but avoid copying unused portions of tun_metadata.  Unused
+ * data in 'dst' is NOT cleared, so this must not be used in cases where the
+ * uninitialized portion may be hashed over. */
+static inline void
+flow_tnl_copy__(struct flow_tnl *dst, const struct flow_tnl *src)
+{
+    memcpy(dst, src, flow_tnl_size(src));
+}
+
+/* Fwd declare conn here. */
+struct conn;
+
+/* Datapath packet metadata */
+struct pkt_metadata {
+PADDED_MEMBERS_CACHELINE_MARKER(CACHE_LINE_SIZE, cacheline0,
+    uint32_t recirc_id;         /* Recirculation id carried with the
+                                   recirculating packets. 0 for packets
+                                   received from the wire. */
+    uint32_t dp_hash;           /* hash value computed by the recirculation
+                                   action. */
+    uint32_t skb_priority;      /* Packet priority for QoS. */
+    uint32_t pkt_mark;          /* Packet mark. */
+    uint8_t  ct_state;          /* Connection state. */
+    bool ct_orig_tuple_ipv6;
+    uint16_t ct_zone;           /* Connection zone. */
+    uint32_t ct_mark;           /* Connection mark. */
+    ovs_u128 ct_label;          /* Connection label. */
+    union flow_in_port in_port; /* Input port. */
+    odp_port_t orig_in_port;    /* Originating in_port for tunneled packets */
+    struct conn *conn;          /* Cached conntrack connection. */
+    bool reply;                 /* True if reply direction. */
+    bool icmp_related;          /* True if ICMP related. */
+);
+
+PADDED_MEMBERS_CACHELINE_MARKER(CACHE_LINE_SIZE, cacheline1,
+    union {                     /* Populated only for non-zero 'ct_state'. */
+        struct ovs_key_ct_tuple_ipv4 ipv4;
+        struct ovs_key_ct_tuple_ipv6 ipv6;   /* Used only if                */
+    } ct_orig_tuple;                         /* 'ct_orig_tuple_ipv6' is set */
+);
+
+PADDED_MEMBERS_CACHELINE_MARKER(CACHE_LINE_SIZE, cacheline2,
+    struct flow_tnl tunnel;     /* Encapsulating tunnel parameters. Note that
+                                 * if 'ip_dst' == 0, the rest of the fields may
+                                 * be uninitialized. */
+);
+};
+
+BUILD_ASSERT_DECL(offsetof(struct pkt_metadata, cacheline0) == 0);
+BUILD_ASSERT_DECL(offsetof(struct pkt_metadata, cacheline1) ==
+                  CACHE_LINE_SIZE);
+BUILD_ASSERT_DECL(offsetof(struct pkt_metadata, cacheline2) ==
+                  2 * CACHE_LINE_SIZE);
+
+static inline void
+pkt_metadata_init_tnl(struct pkt_metadata *md)
+{
+    odp_port_t orig_in_port;
+
+    /* Zero up through the tunnel metadata options. The length and table
+     * are before this and as long as they are empty, the options won't
+     * be looked at. Keep the orig_in_port field. */
+    orig_in_port = md->in_port.odp_port;
+    memset(md, 0, offsetof(struct pkt_metadata, tunnel.metadata.opts));
+    md->orig_in_port = orig_in_port;
+}
+
+static inline void
+pkt_metadata_init_conn(struct pkt_metadata *md)
+{
+    md->conn = NULL;
+}
+
+static inline void
+pkt_metadata_init(struct pkt_metadata *md, odp_port_t port)
+{
+    /* This is called for every packet in userspace datapath and affects
+     * performance if all the metadata is initialized. Hence, fields should
+     * only be zeroed out when necessary.
+     *
+     * Initialize only till ct_state. Once the ct_state is zeroed out rest
+     * of ct fields will not be looked at unless ct_state != 0.
+     */
+    memset(md, 0, offsetof(struct pkt_metadata, ct_orig_tuple_ipv6));
+
+    /* It can be expensive to zero out all of the tunnel metadata. However,
+     * we can just zero out ip_dst and the rest of the data will never be
+     * looked at. */
+    md->tunnel.ip_dst = 0;
+    md->tunnel.ipv6_dst = in6addr_any;
+    md->in_port.odp_port = port;
+    md->orig_in_port = port;
+    md->conn = NULL;
+}
+
+/* This function prefetches the cachelines touched by pkt_metadata_init()
+ * and pkt_metadata_init_tnl().  For performance reasons the two functions
+ * should be kept in sync. */
+static inline void
+pkt_metadata_prefetch_init(struct pkt_metadata *md)
+{
+    /* Prefetch cacheline0 as members till ct_state and odp_port will
+     * be initialized later in pkt_metadata_init(). */
+    OVS_PREFETCH(md->cacheline0);
+
+    /* Prefetch cacheline1 as members of this cacheline will be zeroed out
+     * in pkt_metadata_init_tnl(). */
+    OVS_PREFETCH(md->cacheline1);
+
+    /* Prefetch cachline2 as ip_dst & ipv6_dst fields will be initialized. */
+    OVS_PREFETCH(md->cacheline2);
 }
 
 static inline void

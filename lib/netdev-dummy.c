@@ -34,7 +34,6 @@
 #include "openvswitch/ofpbuf.h"
 #include "openvswitch/vlog.h"
 #include "ovs-atomic.h"
-#include "packets.h"
 #include "pcap-file.h"
 #include "openvswitch/poll-loop.h"
 #include "openvswitch/shash.h"

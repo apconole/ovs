@@ -18,6 +18,7 @@
 #include "conntrack.h"
 
 #include "dp-packet.h"
+#include "openvswitch/dynamic-string.h"
 #include "fatal-signal.h"
 #include "flow.h"
 #include "netdev.h"

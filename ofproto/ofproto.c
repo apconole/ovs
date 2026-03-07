@@ -53,7 +53,6 @@
 #include "openvswitch/ofpbuf.h"
 #include "openvswitch/vlog.h"
 #include "ovs-rcu.h"
-#include "packets.h"
 #include "pinsched.h"
 #include "openvswitch/poll-loop.h"
 #include "random.h"

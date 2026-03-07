@@ -21,7 +21,6 @@
 #include <stddef.h>
 #include "compiler.h"
 #include "dp-packet.h"
-#include "packets.h"
 #include "unixctl.h"
 
 struct netdev;

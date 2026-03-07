@@ -384,7 +384,6 @@
 #include "openflow/openflow.h"
 #include "openvswitch/ofp-meter.h"
 #include "ovs-numa.h"
-#include "packets.h"
 #include "util.h"
 
 #ifdef  __cplusplus

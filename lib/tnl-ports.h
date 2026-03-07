@@ -21,7 +21,6 @@
 #include <sys/socket.h>
 
 #include "flow.h"
-#include "packets.h"
 #include "util.h"
 
 odp_port_t tnl_port_map_lookup(struct flow *flow, struct flow_wildcards *wc);

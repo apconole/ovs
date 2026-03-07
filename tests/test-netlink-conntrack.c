@@ -19,7 +19,9 @@
 #include <stdlib.h>
 #include <linux/netfilter/nfnetlink.h>
 
+#include "net-proto.h"
 #include "ct-dpif.h"
+#include "netlink.h"
 #include "netlink-conntrack.h"
 #include "netlink-notifier.h"
 #include "ovstest.h"

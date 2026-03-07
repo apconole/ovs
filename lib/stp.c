@@ -30,7 +30,6 @@
 #include "openvswitch/ofpbuf.h"
 #include "ovs-atomic.h"
 #include "dp-packet.h"
-#include "packets.h"
 #include "seq.h"
 #include "unixctl.h"
 #include "util.h"

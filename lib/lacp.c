@@ -24,7 +24,6 @@
 #include "openvswitch/hmap.h"
 #include "dp-packet.h"
 #include "ovs-atomic.h"
-#include "packets.h"
 #include "openvswitch/poll-loop.h"
 #include "seq.h"
 #include "openvswitch/shash.h"

@@ -66,7 +66,6 @@
 #include "ovs-numa.h"
 #include "ovs-rcu.h"
 #include "ovs-thread.h"
-#include "packets.h"
 #include "smap.h"
 #include "sset.h"
 #include "timeval.h"

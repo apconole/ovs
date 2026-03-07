@@ -21,7 +21,7 @@
 #include <stdbool.h>
 #include <inttypes.h>
 
-#include "packets.h"
+#include "net-proto.h"
 
 struct bfd;
 struct dpif_flow_stats;

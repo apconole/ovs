@@ -45,7 +45,6 @@
 #include "openvswitch/type-props.h"
 #include "openvswitch/vlog.h"
 #include "openflow/intel-ext.h"
-#include "packets.h"
 #include "random.h"
 #include "tun-metadata.h"
 #include "unaligned.h"

@@ -39,7 +39,6 @@
 #include "openvswitch/dynamic-string.h"
 #include "openvswitch/json.h"
 #include "netdev.h"
-#include "packets.h"
 #include "seq.h"
 #include "ovs-thread.h"
 #include "route-table.h"

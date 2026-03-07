@@ -24,7 +24,6 @@
 #include "openvswitch/list.h"
 #include "ovs-numa.h"
 #include "ovs-rcu.h"
-#include "packets.h"
 #include "seq.h"
 #include "openvswitch/shash.h"
 #include "smap.h"

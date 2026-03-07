@@ -48,7 +48,6 @@
 #include "dpif-netdev-private-extract.h"
 #include "dpif-netdev-private-flow.h"
 #include "dp-packet.h"
-#include "packets.h"
 
 /* AVX512-BW level permutex2var_epi8 emulation. */
 static inline __m512i

@@ -25,6 +25,7 @@
 
 #include "coverage.h"
 #include "csum.h"
+#include "openvswitch/dynamic-string.h"
 #include "ipf.h"
 #include "latch.h"
 #include "openvswitch/hmap.h"
@@ -32,7 +33,6 @@
 #include "openvswitch/types.h"
 #include "openvswitch/vlog.h"
 #include "ovs-atomic.h"
-#include "packets.h"
 #include "util.h"
 
 VLOG_DEFINE_THIS_MODULE(ipf);

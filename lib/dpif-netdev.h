@@ -23,7 +23,6 @@
 #include "dpif.h"
 #include "openvswitch/types.h"
 #include "dp-packet.h"
-#include "packets.h"
 
 #ifdef  __cplusplus
 extern "C" {

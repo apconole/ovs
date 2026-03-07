@@ -38,7 +38,6 @@
 #include "openvswitch/ofpbuf.h"
 #include "ovs-thread.h"
 #include "openvswitch/types.h"
-#include "packets.h"
 #include "openvswitch/poll-loop.h"
 #include "random.h"
 #include "seq.h"

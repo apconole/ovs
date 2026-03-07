@@ -24,6 +24,7 @@
 #include "dpif-netdev-private-dpcls.h"
 #include "dpif-netdev-private-extract.h"
 #include "dpif-netdev-private-thread.h"
+#include "openvswitch/dynamic-string.h"
 #include "flow.h"
 #include "openvswitch/vlog.h"
 #include "ovs-thread.h"

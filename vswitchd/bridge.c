@@ -52,7 +52,6 @@
 #include "openvswitch/vlog.h"
 #include "ovs-lldp.h"
 #include "ovs-numa.h"
-#include "packets.h"
 #include "openvswitch/poll-loop.h"
 #include "seq.h"
 #include "sflow_api.h"

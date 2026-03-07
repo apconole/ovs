@@ -26,8 +26,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include "crc32c.h"
+#include "net-proto.h"
 #include "ovstest.h"
-#include "packets.h"
 #include "random.h"
 #include "unaligned.h"
 #include "util.h"

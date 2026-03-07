@@ -60,7 +60,6 @@
 #include "openvswitch/ofp-util.h"
 #include "openvswitch/ofpbuf.h"
 #include "openvswitch/type-props.h"
-#include "packets.h"
 #include "unaligned.h"
 #include "util.h"
 #include "uuid.h"

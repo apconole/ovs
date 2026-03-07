@@ -19,6 +19,7 @@
 #include "dpif-netdev-lookup.h"
 
 #include "cpu.h"
+#include "openvswitch/dynamic-string.h"
 #include "openvswitch/vlog.h"
 
 VLOG_DEFINE_THIS_MODULE(dpif_netdev_lookup);

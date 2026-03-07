@@ -29,7 +29,6 @@
 #include "ovs-atomic.h"
 #include "ovs-rcu.h"
 #include "ovs-thread.h"
-#include "packets.h"
 #include "random.h"
 #include "openvswitch/shash.h"
 #include "socket-util.h"

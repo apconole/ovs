@@ -24,6 +24,7 @@
 
 #include "dpif-netlink.h"
 #include "netdev-vport.h"
+#include "netlink.h"
 #include "netlink-socket.h"
 #include "openvswitch/vlog.h"
 

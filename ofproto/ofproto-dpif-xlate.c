@@ -61,7 +61,6 @@
 #include "openvswitch/vlog.h"
 #include "ovs-lldp.h"
 #include "ovs-router.h"
-#include "packets.h"
 #include "tnl-neigh-cache.h"
 #include "tnl-ports.h"
 #include "tunnel.h"

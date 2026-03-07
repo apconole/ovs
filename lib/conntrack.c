@@ -17,8 +17,10 @@
 #include <config.h>
 #include <ctype.h>
 #include <errno.h>
+#include <sys/socket.h>
 #include <sys/types.h>
 #include <netinet/in.h>
+#include <arpa/inet.h>
 #include <netinet/icmp6.h>
 #include <string.h>
 
@@ -32,6 +34,7 @@
 #include "dp-packet.h"
 #include "flow.h"
 #include "netdev.h"
+#include "net-proto.h"
 #include "odp-netlink.h"
 #include "odp-util.h"
 #include "openvswitch/hmap.h"

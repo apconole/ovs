@@ -307,8 +307,6 @@ lib_libopenvswitch_la_SOURCES = \
 	lib/ovsdb-types.h \
 	lib/ox-stat.c \
 	lib/ox-stat.h \
-	lib/packets.c \
-	lib/packets.h \
 	lib/pcap-file.c \
 	lib/pcap-file.h \
 	lib/perf-counter.h \

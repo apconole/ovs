@@ -24,7 +24,6 @@
 #include "openvswitch/dynamic-string.h"
 #include "net-proto.h"
 #include "odp-util.h"
-#include "packets.h"
 #include "util.h"
 
 struct trie_ctx;

@@ -43,7 +43,6 @@
 #include "openvswitch/ofpbuf.h"
 #include "openvswitch/util.h"
 #include "openvswitch/vlog.h"
-#include "packets.h"
 #include "timeval.h"
 #include "unaligned.h"
 

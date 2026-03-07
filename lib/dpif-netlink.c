@@ -58,7 +58,6 @@
 #include "openvswitch/thread.h"
 #include "openvswitch/usdt-probes.h"
 #include "openvswitch/vlog.h"
-#include "packets.h"
 #include "random.h"
 #include "sset.h"
 #include "timeval.h"

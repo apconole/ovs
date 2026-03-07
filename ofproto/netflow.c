@@ -30,7 +30,6 @@
 #include "openvswitch/ofpbuf.h"
 #include "ofproto.h"
 #include "ofproto/netflow.h"
-#include "packets.h"
 #include "openvswitch/poll-loop.h"
 #include "socket-util.h"
 #include "timeval.h"

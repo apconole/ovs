@@ -55,7 +55,6 @@
 #include "fatal-signal.h"
 #include "openflow/openflow.h"
 #include "ovs-thread.h"
-#include "packets.h"
 #include "openvswitch/poll-loop.h"
 #include "openvswitch/shash.h"
 #include "socket-util.h"

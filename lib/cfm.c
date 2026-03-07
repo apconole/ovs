@@ -31,7 +31,6 @@
 #include "openvswitch/hmap.h"
 #include "netdev.h"
 #include "ovs-atomic.h"
-#include "packets.h"
 #include "openvswitch/poll-loop.h"
 #include "random.h"
 #include "seq.h"

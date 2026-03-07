@@ -20,7 +20,6 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "ofproto-provider.h"
-#include "packets.h"
 
 struct flow;
 struct netdev;

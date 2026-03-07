@@ -35,7 +35,6 @@
 #include "openvswitch/vlog.h"
 #include "ovs-replay.h"
 #include "ovs-thread.h"
-#include "packets.h"
 #include "openvswitch/poll-loop.h"
 #include "random.h"
 #include "socket-util.h"

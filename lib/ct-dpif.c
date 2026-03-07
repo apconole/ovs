@@ -18,8 +18,10 @@
 #include "dpif-provider.h"
 
 #include <errno.h>
+#include <sys/socket.h>
 
 #include "ct-dpif.h"
+#include "openvswitch/dynamic-string.h"
 #include "openvswitch/ofp-ct.h"
 #include "openvswitch/ofp-parse.h"
 #include "openvswitch/vlog.h"

@@ -20,7 +20,6 @@
 
 #include "openvswitch/hmap.h"
 #include "openvswitch/types.h"
-#include "packets.h"
 
 struct flow;
 struct dp_packet;

@@ -25,6 +25,7 @@
 #include <stdint.h>
 
 #include "cmap.h"
+#include "netlink-protocol.h"
 #include "openvswitch/thread.h"
 
 #ifdef  __cplusplus

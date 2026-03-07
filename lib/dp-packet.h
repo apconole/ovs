@@ -17,22 +17,34 @@
 #ifndef DPBUF_H
 #define DPBUF_H 1
 
+#include <inttypes.h>
+#include <sys/types.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 #ifdef DPDK_NETDEV
 #include <rte_config.h>
 #include <rte_mbuf.h>
 #endif
 
+#include "compiler.h"
 #include "csum.h"
+#include "flow.h"
+#include "openvswitch/geneve.h"
+#include "hash.h"
+#include "openvswitch/list.h"
 #include "netdev-afxdp.h"
 #include "netdev-dpdk.h"
 #include "net-proto.h"
-#include "openvswitch/list.h"
-#include "packets.h"
+#include "openvswitch/nsh.h"
+#include "odp-netlink.h"
+#include "openvswitch/packets.h"
+#include "random.h"
+#include "timeval.h"
+#include "openvswitch/types.h"
 #include "util.h"
-#include "flow.h"
+#include "unaligned.h"
 
 #ifdef  __cplusplus
 extern "C" {
@@ -1503,6 +1515,94 @@ dp_packet_update_rss_hash_ipv6_tcp_udp(struct dp_packet *packet)
 
     dp_packet_set_rss_hash(packet, hash);
 }
+
+
+void compose_rarp(struct dp_packet *, const struct eth_addr);
+
+void eth_push_vlan(struct dp_packet *, ovs_be16 tpid, ovs_be16 tci);
+void eth_pop_vlan(struct dp_packet *);
+
+const char *eth_from_hex(const char *hex, struct dp_packet **packetp);
+
+void set_mpls_lse(struct dp_packet *, ovs_be32 label);
+void push_mpls(struct dp_packet *packet, ovs_be16 ethtype, ovs_be32 lse);
+void pop_mpls(struct dp_packet *, ovs_be16 ethtype);
+void add_mpls(struct dp_packet *packet, ovs_be16 ethtype, ovs_be32 lse,
+              bool l3_encap);
+
+
+void push_eth(struct dp_packet *packet, const struct eth_addr *dst,
+              const struct eth_addr *src);
+void pop_eth(struct dp_packet *packet);
+
+void push_nsh(struct dp_packet *packet, const struct nsh_hdr *nsh_hdr_src);
+bool pop_nsh(struct dp_packet *packet);
+
+void *eth_compose(struct dp_packet *, const struct eth_addr eth_dst,
+                  const struct eth_addr eth_src, uint16_t eth_type,
+                  size_t size);
+void *snap_compose(struct dp_packet *, const struct eth_addr eth_dst,
+                   const struct eth_addr eth_src,
+                   unsigned int oui, uint16_t snap_type, size_t size);
+void packet_set_ipv4(struct dp_packet *, ovs_be32 src, ovs_be32 dst, uint8_t tos,
+                     uint8_t ttl);
+void packet_set_ipv4_addr(struct dp_packet *packet, ovs_16aligned_be32 *addr,
+                          ovs_be32 new_addr);
+void packet_set_ipv6(struct dp_packet *, const struct in6_addr *src,
+                     const struct in6_addr *dst, uint8_t tc,
+                     ovs_be32 fl, uint8_t hlmit);
+void packet_set_ipv6_addr(struct dp_packet *packet, uint8_t proto,
+                          ovs_16aligned_be32 addr[4],
+                          const struct in6_addr *new_addr,
+                          bool recalculate_csum);
+void packet_set_tcp_port(struct dp_packet *, ovs_be16 src, ovs_be16 dst);
+void packet_set_udp_port(struct dp_packet *, ovs_be16 src, ovs_be16 dst);
+void packet_set_sctp_port(struct dp_packet *, ovs_be16 src, ovs_be16 dst);
+void packet_set_icmp(struct dp_packet *, uint8_t type, uint8_t code);
+void packet_set_nd(struct dp_packet *, const struct in6_addr *target,
+                   const struct eth_addr sll, const struct eth_addr tll);
+void packet_set_nd_ext(struct dp_packet *packet,
+                       const ovs_16aligned_be32 rso_flags,
+                       const uint8_t opt_type);
+void packet_set_igmp3_query(struct dp_packet *, uint8_t max_resp,
+                            ovs_be32 group, bool srs, uint8_t qrv,
+                            uint8_t qqic);
+void *compose_ipv6(struct dp_packet *packet, uint8_t proto,
+                   const struct in6_addr *src, const struct in6_addr *dst,
+                   uint8_t key_tc, ovs_be32 key_fl, uint8_t key_hl, int size);
+void compose_arp__(struct dp_packet *);
+void compose_arp(struct dp_packet *, uint16_t arp_op,
+                 const struct eth_addr arp_sha,
+                 const struct eth_addr arp_tha, bool broadcast,
+                 ovs_be32 arp_spa, ovs_be32 arp_tpa);
+void compose_nd_ns(struct dp_packet *, const struct eth_addr eth_src,
+                   const struct in6_addr *ipv6_src,
+                   const struct in6_addr *ipv6_dst);
+void compose_nd_na(struct dp_packet *, const struct eth_addr eth_src,
+                   const struct eth_addr eth_dst,
+                   const struct in6_addr *ipv6_src,
+                   const struct in6_addr *ipv6_dst,
+                   ovs_be32 rso_flags);
+void compose_nd_ra(struct dp_packet *,
+                   const struct eth_addr eth_src,
+                   const struct eth_addr eth_dst,
+                   const struct in6_addr *ipv6_src,
+                   const struct in6_addr *ipv6_dst,
+                   uint8_t cur_hop_limit, uint8_t mo_flags,
+                   ovs_be16 router_lt, ovs_be32 reachable_time,
+                   ovs_be32 retrans_timer, uint32_t mtu);
+void packet_put_ra_prefix_opt(struct dp_packet *,
+                              uint8_t plen, uint8_t la_flags,
+                              ovs_be32 valid_lifetime,
+                              ovs_be32 preferred_lifetime,
+                              const ovs_be128 router_prefix);
+bool packet_rh_present(struct dp_packet *packet, uint8_t *nexthdr,
+                       bool *first_frag);
+void IP_ECN_set_ce(struct dp_packet *pkt, bool is_ipv6);
+void packet_tcp_complete_csum(struct dp_packet *, bool is_inner);
+void packet_udp_complete_csum(struct dp_packet *, bool is_inner);
+bool packet_udp_tunnel_csum(struct dp_packet *);
+void packet_sctp_complete_csum(struct dp_packet *, bool is_inner);
 
 #ifdef  __cplusplus
 }

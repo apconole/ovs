@@ -68,7 +68,6 @@
 #include "openflow/openflow.h"
 #include "ovs-atomic.h"
 #include "ovs-numa.h"
-#include "packets.h"
 #include "openvswitch/poll-loop.h"
 #include "rtnetlink.h"
 #include "openvswitch/shash.h"

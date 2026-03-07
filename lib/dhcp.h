@@ -18,7 +18,6 @@
 #define DHCP_H 1
 
 #include <stdint.h>
-#include "packets.h"
 #include "util.h"
 
 /* Ports used by DHCP. */

@@ -20,11 +20,11 @@
 #include "byte-order.h"
 #include "openvswitch/match.h"
 #include "openvswitch/meta-flow.h"
+#include "net-proto.h"
 #include "openvswitch/ofp-actions.h"
 #include "openvswitch/ofp-flow.h"
 #include "openvswitch/ofp-match.h"
 #include "openvswitch/ofp-table.h"
-#include "packets.h"
 #include "socket-util.h"
 #include "util.h"
 

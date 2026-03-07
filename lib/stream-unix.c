@@ -27,7 +27,6 @@
 #include <string.h>
 #include <unistd.h>
 #include "ovs-atomic.h"
-#include "packets.h"
 #include "openvswitch/poll-loop.h"
 #include "socket-util.h"
 #include "dirs.h"

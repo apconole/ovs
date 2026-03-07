@@ -26,7 +26,6 @@
 #include "netdev.h"
 #include "odp-util.h"
 #include "openvswitch/ofpbuf.h"
-#include "packets.h"
 #include "route-table.h"
 #include "seq.h"
 #include "smap.h"

@@ -21,7 +21,6 @@
 #include "openvswitch/types.h"
 #include "ovs-atomic.h"
 #include "ovs-rcu.h"
-#include "packets.h"
 #include "flow.h"
 
 #ifdef  __cplusplus

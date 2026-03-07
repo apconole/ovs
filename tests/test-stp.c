@@ -26,7 +26,6 @@
 #include "dp-packet.h"
 #include "openvswitch/ofpbuf.h"
 #include "ovstest.h"
-#include "packets.h"
 #include "openvswitch/vlog.h"
 
 struct bpdu {

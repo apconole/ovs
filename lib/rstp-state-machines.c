@@ -40,7 +40,6 @@
 #include "connectivity.h"
 #include "openvswitch/ofpbuf.h"
 #include "dp-packet.h"
-#include "packets.h"
 #include "seq.h"
 #include "unixctl.h"
 #include "util.h"

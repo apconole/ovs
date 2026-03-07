@@ -22,6 +22,7 @@
 #include "cpu.h"
 #include "dpdk.h"
 #include "dp-packet.h"
+#include "netlink.h"
 #include "odp-execute.h"
 #include "odp-execute-private.h"
 #include "odp-netlink.h"

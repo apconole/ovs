@@ -32,6 +32,7 @@
 
 struct ds;
 struct nlattr;
+struct nsh_hdr;
 struct ofpbuf;
 struct simap;
 struct pkt_metadata;

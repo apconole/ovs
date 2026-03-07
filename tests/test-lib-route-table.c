@@ -18,13 +18,14 @@
 
 #undef NDEBUG
 
+#include <inttypes.h>
 #include <linux/rtnetlink.h>
 #include <stdio.h>
 #include <stdlib.h>
 
 #include "netlink-notifier.h"
+#include "net-proto.h"
 #include "ovstest.h"
-#include "packets.h"
 #include "route-table.h"
 
 /* The following definition should be available in Linux 6.15 and might be

@@ -34,7 +34,6 @@
 #include "netdev.h"
 #include "ovs-atomic.h"
 #include "ovs-thread.h"
-#include "packets.h"
 #include "openvswitch/poll-loop.h"
 #include "seq.h"
 #include "socket-util.h"

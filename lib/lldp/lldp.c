@@ -27,7 +27,6 @@
 #include <sys/types.h>
 #include "compiler.h"
 #include "dp-packet.h"
-#include "packets.h"
 
 VLOG_DEFINE_THIS_MODULE(lldp);
 

@@ -66,7 +66,6 @@
 #include "openvswitch/shash.h"
 #include "openvswitch/vconn.h"
 #include "openvswitch/vlog.h"
-#include "packets.h"
 #include "pcap-file.h"
 #include "openvswitch/poll-loop.h"
 #include "random.h"
@@ -74,6 +73,7 @@
 #include "stream-ssl.h"
 #include "socket-util.h"
 #include "timeval.h"
+#include "tun-metadata.h"
 #include "unixctl.h"
 #include "util.h"
 

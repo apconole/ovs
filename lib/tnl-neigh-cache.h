@@ -28,7 +28,6 @@
 
 #include "flow.h"
 #include "netdev.h"
-#include "packets.h"
 #include "util.h"
 
 int tnl_neigh_snoop(const struct flow *flow, struct flow_wildcards *wc,

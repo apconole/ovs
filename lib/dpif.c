@@ -35,7 +35,6 @@
 #include "netlink.h"
 #include "odp-execute.h"
 #include "odp-util.h"
-#include "packets.h"
 #include "route-table.h"
 #include "seq.h"
 #include "sset.h"

@@ -18,8 +18,12 @@
 #define LACP_H 1
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
-#include "packets.h"
+
+#include "net-proto.h"
+
+struct dp_packet;
 
 /* LACP Protocol Implementation. */
 

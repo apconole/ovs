@@ -17,12 +17,14 @@
 #include <config.h>
 #include "openvswitch/ofp-match.h"
 #include "byte-order.h"
+#include "openvswitch/dynamic-string.h"
 #include "flow.h"
 #include "nx-match.h"
 #include "openvswitch/match.h"
 #include "openvswitch/ofp-errors.h"
 #include "openvswitch/ofp-msgs.h"
 #include "openvswitch/ofp-port.h"
+#include "openvswitch/ofpbuf.h"
 #include "openvswitch/packets.h"
 #include "openvswitch/vlog.h"
 

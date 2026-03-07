@@ -38,7 +38,6 @@
 #include "ofproto-dpif-xlate-cache.h"
 #include "ofproto-dpif-trace.h"
 #include "ovs-rcu.h"
-#include "packets.h"
 #include "openvswitch/poll-loop.h"
 #include "seq.h"
 #include "tunnel.h"

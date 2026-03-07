@@ -18,7 +18,6 @@
 #include <stdint.h>
 
 #include "openflow/openflow.h"
-#include "packets.h"
 
 struct bfd;
 struct cfm;

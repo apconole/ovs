@@ -36,7 +36,6 @@
 #include "openvswitch/ofp-util.h"
 #include "openvswitch/ofpbuf.h"
 #include "openvswitch/vlog.h"
-#include "packets.h"
 #include "openvswitch/poll-loop.h"
 #include "random.h"
 #include "util.h"

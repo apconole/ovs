@@ -17,8 +17,8 @@
 #ifndef CT_DPIF_H
 #define CT_DPIF_H
 
+#include "openvswitch/list.h"
 #include "openvswitch/types.h"
-#include "packets.h"
 
 struct ofp_ct_match;
 
@@ -228,6 +228,7 @@ enum {
     CT_STATS_MAX,
 };
 
+struct ds;
 struct dpif;
 struct dpif_ipf_status;
 struct ipf_dump_ctx;

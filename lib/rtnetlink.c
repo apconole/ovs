@@ -24,8 +24,8 @@
 
 #include "netlink.h"
 #include "netlink-notifier.h"
+#include "net-proto.h"
 #include "openvswitch/ofpbuf.h"
-#include "packets.h"
 
 #if IFLA_INFO_MAX < 5
 #define IFLA_INFO_SLAVE_KIND 4

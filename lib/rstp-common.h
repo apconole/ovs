@@ -36,7 +36,6 @@
 #include "openvswitch/hmap.h"
 #include "openvswitch/list.h"
 #include "ovs-atomic.h"
-#include "packets.h"
 
 enum admin_port_state {
     RSTP_ADMIN_BRIDGE_PORT_STATE_DISABLED = 0,

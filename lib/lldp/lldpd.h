@@ -28,7 +28,6 @@
 #include "openvswitch/list.h"
 #include "lldpd-structs.h"
 #include "lldp-tlv.h"
-#include "packets.h"
 #include "openvswitch/vlog.h"
 
 #define ETHERTYPE_LLDP 0x88cc

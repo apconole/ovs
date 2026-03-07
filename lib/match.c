@@ -23,7 +23,6 @@
 #include "openvswitch/dynamic-string.h"
 #include "openvswitch/meta-flow.h"
 #include "openvswitch/ofp-port.h"
-#include "packets.h"
 #include "tun-metadata.h"
 #include "openvswitch/nsh.h"
 

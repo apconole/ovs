@@ -31,8 +31,8 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "net-proto.h"
 #include "ovs-router.h"
-#include "packets.h"
 #include "openvswitch/vlog.h"
 #include "util.h"
 

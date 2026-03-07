@@ -16,11 +16,12 @@
 
 #include <config.h>
 #undef NDEBUG
-#include "packets.h"
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
+#include "net-proto.h"
 #include "ovstest.h"
 
 static void

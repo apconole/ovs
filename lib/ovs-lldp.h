@@ -25,7 +25,6 @@
 #include "openvswitch/list.h"
 #include "lldp/lldpd.h"
 #include "ovs-atomic.h"
-#include "packets.h"
 #include "timer.h"
 
 /* Transmit every LLDPD_TX_INTERVAL seconds. */

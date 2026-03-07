@@ -42,7 +42,6 @@
 #include "openvswitch/dynamic-string.h"
 #include "openvswitch/vlog.h"
 #include "ovs-router.h"
-#include "packets.h"
 #include "tnl-neigh-cache.h"
 #include "util.h"
 

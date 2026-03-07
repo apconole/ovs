@@ -29,7 +29,6 @@
 #include "openvswitch/types.h"
 #include "ovs-atomic.h"
 #include "ovs-thread.h"
-#include "packets.h"
 #include "hindex.h"
 
 /* Userspace connection tracker
@@ -62,6 +61,7 @@
  */
 
 struct dp_packet_batch;
+struct dp_packet;
 
 struct conntrack;
 

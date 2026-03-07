@@ -27,11 +27,11 @@
 #include "csum.h"
 #include "dp-packet.h"
 #include "immintrin.h"
+#include "netlink.h"
 #include "odp-execute.h"
 #include "odp-execute-private.h"
 #include "odp-netlink.h"
 #include "openvswitch/vlog.h"
-#include "packets.h"
 
 VLOG_DEFINE_THIS_MODULE(odp_execute_avx512);
 

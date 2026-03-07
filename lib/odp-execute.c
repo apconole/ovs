@@ -32,7 +32,6 @@
 #include "netlink.h"
 #include "odp-netlink.h"
 #include "odp-util.h"
-#include "packets.h"
 #include "flow.h"
 #include "unaligned.h"
 #include "util.h"

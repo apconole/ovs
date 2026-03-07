@@ -43,7 +43,6 @@
 #include "odp-util.h"
 #include "openvswitch/ofpbuf.h"
 #include "openvswitch/ofp-ct.h"
-#include "packets.h"
 #include "openvswitch/shash.h"
 #include "simap.h"
 #include "smap.h"

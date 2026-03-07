@@ -26,7 +26,6 @@
 #include "dp-packet.h"
 #include "flow.h"
 #include "openvswitch/hmap.h"
-#include "packets.h"
 #include "timeval.h"
 #include "unaligned.h"
 #include "util.h"

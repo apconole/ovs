@@ -26,7 +26,6 @@
 #include "odp-netlink.h"
 #include "openvswitch/ofp-match.h"
 #include "ovs-rcu.h"
-#include "packets.h"
 #include "tun-metadata.h"
 #include "util.h"
 

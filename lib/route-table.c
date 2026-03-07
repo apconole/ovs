@@ -36,7 +36,6 @@
 #include "openvswitch/list.h"
 #include "openvswitch/ofpbuf.h"
 #include "ovs-router.h"
-#include "packets.h"
 #include "rtnetlink.h"
 #include "tnl-ports.h"
 #include "openvswitch/vlog.h"

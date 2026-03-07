@@ -25,7 +25,6 @@
 #include <sys/socket.h>
 #include "aa-structs.h"
 #include "lldp-const.h"
-#include "packets.h"
 
 enum {
     LLDPD_AF_UNSPEC = 0,

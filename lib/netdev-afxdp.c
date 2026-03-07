@@ -52,7 +52,6 @@
 #include "openvswitch/vlog.h"
 #include "ovs-atomic.h"
 #include "ovs-numa.h"
-#include "packets.h"
 #include "socket-util.h"
 #include "util.h"
 

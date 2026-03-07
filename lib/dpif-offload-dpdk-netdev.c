@@ -27,13 +27,14 @@
 #include "dpif-netdev.h"
 #include "dpif-offload.h"
 #include "dpif-offload-dpdk-private.h"
+#include "openvswitch/dynamic-string.h"
 #include "netdev-provider.h"
 #include "netdev-vport.h"
+#include "netlink.h"
 #include "odp-util.h"
 #include "openvswitch/match.h"
 #include "openvswitch/vlog.h"
 #include "ovs-rcu.h"
-#include "packets.h"
 #include "uuid.h"
 
 VLOG_DEFINE_THIS_MODULE(dpif_offload_dpdk_netdev);

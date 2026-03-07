@@ -26,7 +26,6 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include "openvswitch/dynamic-string.h"
-#include "packets.h"
 #include "socket-util.h"
 #include "util.h"
 #include "stream-provider.h"

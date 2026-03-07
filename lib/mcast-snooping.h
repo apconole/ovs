@@ -25,7 +25,6 @@
 #include "openvswitch/list.h"
 #include "ovs-atomic.h"
 #include "ovs-thread.h"
-#include "packets.h"
 #include "timeval.h"
 
 struct mcast_snooping;
