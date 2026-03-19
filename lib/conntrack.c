@@ -157,6 +157,39 @@ expectation_clean(struct conntrack *ct, const struct conn_key *parent_key);
 
 static struct ct_l4_proto *l4_protos[UINT8_MAX + 1];
 
+/* Private per-connection storage slot registry.
+ *
+ * ct_private_slots[] is written once per slot at module initialization (via
+ * conn_private_id_alloc()) and then read-only for the lifetime of the process,
+ * so no additional locking is required to read the destructor pointer.
+ */
+struct ct_private_slot {
+    void (*destructor)(void *); /* NULL means no cleanup required. */
+};
+
+static struct ct_private_slot ct_private_slots[CT_CONN_PRIVATE_MAX];
+static atomic_uint32_t ct_private_next_id = 0;
+
+/* See conntrack.h for the full API description. */
+ct_private_id_t
+conn_private_id_alloc(void (*destructor)(void *))
+{
+    uint32_t id;
+
+    atomic_add(&ct_private_next_id, 1u, &id);
+    if (id >= CT_CONN_PRIVATE_MAX) {
+        /* Undo the increment so the counter doesn't overflow. */
+        atomic_sub(&ct_private_next_id, 1u, &id);
+        static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 1);
+        VLOG_ERR_RL(&rl, "conntrack: all %d private storage slots are in use; "
+                    "cannot allocate a new one", CT_CONN_PRIVATE_MAX);
+        return CT_PRIVATE_ID_INVALID;
+    }
+
+    ct_private_slots[id].destructor = destructor;
+    return id;
+}
+
 static void
 handle_ftp_ctl(struct conntrack *ct, const struct conn_lookup_ctx *ctx,
                struct dp_packet *pkt, struct conn *ec, long long now,
@@ -2719,6 +2752,16 @@ new_conn(struct conntrack *ct, struct dp_packet *pkt, struct conn_key *key,
 static void
 delete_conn__(struct conn *conn)
 {
+    uint32_t n;
+
+    /* Invoke registered destructors for any non-NULL private slots. */
+    atomic_read_relaxed(&ct_private_next_id, &n);
+    for (uint32_t i = 0; i < n; i++) {
+        if (ct_private_slots[i].destructor && conn->private[i]) {
+            ct_private_slots[i].destructor(conn->private[i]);
+        }
+    }
+
     free(conn->alg);
     free(conn);
 }

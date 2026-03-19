@@ -91,6 +91,45 @@ struct nat_action_info_t {
     uint16_t nat_flags;
 };
 
+/* Private per-connection storage slots.
+ *
+ * Modules (protocol handlers, offload interfaces, etc.) can reserve a slot
+ * at initialization time and use it to attach private data to every tracked
+ * connection.  Slot IDs are small integers that index directly into a fixed-
+ * size array inside struct conn, so get/set operations are O(1) and branch-
+ * free – safe to call on the datapath fast path.
+ *
+ * Usage
+ * -----
+ *   // At module initialization – call once, store the returned id.
+ *   static ct_private_id_t my_id;
+ *   my_id = conn_private_id_alloc(my_conn_data_free);
+ *
+ *   // On the fast path (no lock needed beyond conn->lock for the pointer).
+ *   conn_private_set(conn, my_id, my_data);
+ *   my_data = conn_private_get(conn, my_id);
+ *
+ * Thread-safety
+ * -------------
+ * The pointer slot itself is protected by conn->lock.  The pointed-to data
+ * is the responsibility of the registering module.
+ */
+
+/* Maximum number of private storage slots available per connection. */
+#define CT_CONN_PRIVATE_MAX 8
+
+typedef unsigned int ct_private_id_t;
+
+/* Returned by conn_private_id_alloc() when no slots remain. */
+#define CT_PRIVATE_ID_INVALID UINT_MAX
+
+/* Allocate a private storage slot.  'destructor' (may be NULL) is called with
+ * the stored pointer when a connection is freed; it must be safe to call with
+ * a NULL argument.  Returns CT_PRIVATE_ID_INVALID on failure (all slots
+ * taken).  Must be called before any connection is created that should carry
+ * this slot (i.e. at module initialization time). */
+ct_private_id_t conn_private_id_alloc(void (*destructor)(void *));
+
 struct conntrack *conntrack_init(void);
 void conntrack_destroy(struct conntrack *);
 
