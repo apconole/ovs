@@ -121,19 +121,20 @@ ct_offload_module_init(void)
      * directly from their own module-init routines. */
 }
 
-/* ct_offload_conn_add() - notify all eligible providers of a new connection.
+/* ct_offload_conn_add_() - notify all eligible providers of a new connection.
  *
  * Iterates over registered providers and calls conn_add() on each one that
  * reports can_offload() == true for this context.  Returns the first non-zero
  * error encountered, but continues notifying remaining providers.  This allows
- * the underlying hardware conntrack details across providers function. */
-int
-ct_offload_conn_add(const struct ct_offload_ctx *ctx)
+ * the underlying hardware conntrack details across providers function.
+ *
+ * `locked` tells the function that the offload mutex is already acquired. */
+static int
+ct_offload_conn_add_(const struct ct_offload_ctx *ctx)
 {
     struct ct_offload_class_node *node;
     int ret = 0;
 
-    ovs_mutex_lock(&ct_offload_mutex);
     LIST_FOR_EACH (node, list_node, &ct_offload_classes) {
         const struct ct_offload_class *class = node->class;
 
@@ -148,21 +149,31 @@ ct_offload_conn_add(const struct ct_offload_ctx *ctx)
             }
         }
     }
+
+    return ret;
+}
+
+int
+ct_offload_conn_add(const struct ct_offload_ctx *ctx)
+{
+    int ret;
+    
+    ovs_mutex_lock(&ct_offload_mutex);
+    ret = ct_offload_conn_add_(ctx);
     ovs_mutex_unlock(&ct_offload_mutex);
 
     return ret;
 }
 
-/* ct_offload_conn_del() - notify all providers that a connection was removed.
+/* ct_offload_conn_del_() - notify all providers that a connection was removed.
  *
  * Called unconditionally on all providers so that each can clean up any
  * state it may have installed. */
-void
-ct_offload_conn_del(const struct ct_offload_ctx *ctx)
+static void
+ct_offload_conn_del_(const struct ct_offload_ctx *ctx)
 {
     struct ct_offload_class_node *node;
 
-    ovs_mutex_lock(&ct_offload_mutex);
     LIST_FOR_EACH (node, list_node, &ct_offload_classes) {
         const struct ct_offload_class *class = node->class;
 
@@ -170,6 +181,13 @@ ct_offload_conn_del(const struct ct_offload_ctx *ctx)
             class->conn_del(ctx);
         }
     }
+}
+
+void
+ct_offload_conn_del(const struct ct_offload_ctx *ctx)
+{
+    ovs_mutex_lock(&ct_offload_mutex);
+    ct_offload_conn_del_(ctx);
     ovs_mutex_unlock(&ct_offload_mutex);
 }
 
@@ -178,13 +196,12 @@ ct_offload_conn_del(const struct ct_offload_ctx *ctx)
  * Iterates over providers and returns the first non-zero timestamp returned
  * by a provider's conn_update() callback.  Returns 0 if no provider
  * supplies a timestamp. */
-long long
-ct_offload_conn_update(const struct ct_offload_ctx *ctx)
+static long long
+ct_offload_conn_update_(const struct ct_offload_ctx *ctx)
 {
     struct ct_offload_class_node *node;
     long long last_used = 0;
 
-    ovs_mutex_lock(&ct_offload_mutex);
     LIST_FOR_EACH (node, list_node, &ct_offload_classes) {
         const struct ct_offload_class *class = node->class;
 
@@ -197,19 +214,28 @@ ct_offload_conn_update(const struct ct_offload_ctx *ctx)
             }
         }
     }
-    ovs_mutex_unlock(&ct_offload_mutex);
-
     return last_used;
 }
 
+long long
+ct_offload_conn_update(const struct ct_offload_ctx *ctx)
+{
+    long long ret;
+
+    ovs_mutex_lock(&ct_offload_mutex);
+    ret = ct_offload_conn_update_(ctx);
+    ovs_mutex_unlock(&ct_offload_mutex);
+
+    return ret;
+}
+
 /* ct_offload_can_offload() - returns true if any provider can offload ctx. */
-bool
-ct_offload_can_offload(const struct ct_offload_ctx *ctx)
+static bool
+ct_offload_can_offload_(const struct ct_offload_ctx *ctx)
 {
     struct ct_offload_class_node *node;
     bool result = false;
 
-    ovs_mutex_lock(&ct_offload_mutex);
     LIST_FOR_EACH (node, list_node, &ct_offload_classes) {
         const struct ct_offload_class *class = node->class;
 
@@ -218,18 +244,28 @@ ct_offload_can_offload(const struct ct_offload_ctx *ctx)
             break;
         }
     }
-    ovs_mutex_unlock(&ct_offload_mutex);
 
     return result;
 }
 
+bool
+ct_offload_can_offload(const struct ct_offload_ctx *ctx)
+{
+    bool can_offload;
+
+    ovs_mutex_lock(&ct_offload_mutex);
+    can_offload = ct_offload_can_offload_(ctx);
+    ovs_mutex_unlock(&ct_offload_mutex);
+
+    return can_offload;
+}
+
 /* ct_offload_flush() - flush all offloaded connections from every provider. */
-void
-ct_offload_flush(void)
+static void
+ct_offload_flush_(void)
 {
     struct ct_offload_class_node *node;
 
-    ovs_mutex_lock(&ct_offload_mutex);
     LIST_FOR_EACH (node, list_node, &ct_offload_classes) {
         const struct ct_offload_class *class = node->class;
 
@@ -237,5 +273,116 @@ ct_offload_flush(void)
             class->flush();
         }
     }
+}
+
+void
+ct_offload_flush(void)
+{
+    ovs_mutex_lock(&ct_offload_mutex);
+    ct_offload_flush_();
     ovs_mutex_unlock(&ct_offload_mutex);
+}
+
+
+/* Batch API
+ * =========
+ *
+ * The default implementation serialises each operation in the batch through
+ * the individual per-connection dispatch functions above.  All provider
+ * callbacks are invoked under the ct_offload_mutex, so the per-operation
+ * lock/unlock overhead of the single-op path is avoided across the batch.
+ */
+
+#define CT_OFFLOAD_BATCH_INITIAL_SIZE 8
+
+/* ct_offload_op_batch_init() - prepare an empty batch for use. */
+void
+ct_offload_op_batch_init(struct ct_offload_op_batch *batch)
+{
+    batch->ops      = NULL;
+    batch->n_ops    = 0;
+    batch->allocated = 0;
+}
+
+/* ct_offload_op_batch_add() - append one operation to the batch.
+ *
+ * The batch grows dynamically; callers need not pre-size it. */
+void
+ct_offload_op_batch_add(struct ct_offload_op_batch *batch,
+                        enum ct_offload_op_type type,
+                        const struct ct_offload_ctx *ctx)
+{
+    if (batch->n_ops == batch->allocated) {
+        batch->allocated = batch->allocated
+                           ? batch->allocated * 2
+                           : CT_OFFLOAD_BATCH_INITIAL_SIZE;
+        batch->ops = xrealloc(batch->ops,
+                              batch->allocated * sizeof *batch->ops);
+    }
+
+    struct ct_offload_op *op = &batch->ops[batch->n_ops++];
+    op->type     = type;
+    op->ctx      = *ctx;
+    op->error    = 0;
+}
+
+/* ct_offload_op_batch_submit() - execute every operation in the batch.
+ *
+ * Each op's 'error' field is set to the result of the corresponding
+ * per-connection dispatch.  The mutex is held for the duration of each
+ * operation; providers are invoked directly rather than through the
+ * public single-op wrappers to avoid repeated lock/unlock cycles. */
+void
+ct_offload_op_batch_submit(struct ct_offload_op_batch *batch)
+{
+    struct ct_offload_op *op;
+
+    ovs_mutex_lock(&ct_offload_mutex);
+    CT_OFFLOAD_BATCH_OP_FOR_EACH (idx, op, batch) {
+
+        switch (op->type) {
+        case CT_OFFLOAD_OP_ADD:
+            op->error = ct_offload_conn_add_(&op->ctx);
+            break;
+
+        case CT_OFFLOAD_OP_DEL:
+            ct_offload_conn_del_(&op->ctx);
+            op->error = 0;
+            break;
+
+        case CT_OFFLOAD_OP_UPD: {
+            long long ts = ct_offload_conn_update_(&op->ctx);
+
+            op->error = ts ? 0 : ENODATA;
+            break;
+        }
+
+        case CT_OFFLOAD_OP_POLICY:
+            op->error = ct_offload_can_offload_(&op->ctx) ? 0 : EPERM;
+            break;
+
+        case CT_OFFLOAD_OP_FLUSH:
+            ct_offload_flush_();
+            op->error = 0;
+            break;
+
+        default:
+            op->error = EINVAL;
+            break;
+        }
+    }
+    ovs_mutex_unlock(&ct_offload_mutex);
+}
+
+/* ct_offload_op_batch_destroy() - release memory held by the batch.
+ *
+ * The batch may be re-initialised with ct_offload_op_batch_init() after
+ * this call. */
+void
+ct_offload_op_batch_destroy(struct ct_offload_op_batch *batch)
+{
+    free(batch->ops);
+    batch->ops       = NULL;
+    batch->n_ops     = 0;
+    batch->allocated = 0;
 }

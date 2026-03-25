@@ -91,4 +91,54 @@ long long ct_offload_conn_update(const struct ct_offload_ctx *);
 bool      ct_offload_can_offload(const struct ct_offload_ctx *);
 void      ct_offload_flush(void);
 
+/* Batch offload API.
+ *
+ * The default implementation dispatches each operation individually using the
+ * per-connection API above.  Providers that can handle a native batch may do
+ * so by implementing a batch_submit callback in struct ct_offload_class in the
+ * future.
+ *
+ * Typical usage:
+ *
+ *   struct ct_offload_op_batch batch;
+ *   ct_offload_op_batch_init(&batch);
+ *
+ *   ct_offload_op_batch_add(&batch, CT_OFFLOAD_OP_ADD, &ctx_a);
+ *   ct_offload_op_batch_add(&batch, CT_OFFLOAD_OP_ADD, &ctx_b);
+ *
+ *   ct_offload_op_batch_submit(&batch);
+ *   for_each_op inspect batch.ops[i].error
+ *
+ *   ct_offload_op_batch_destroy(&batch);
+ *
+ * For CT_OFFLOAD_OP_UPD, op->error is set to 0 when the hardware returned a
+ * valid last-used timestamp (expiration was refreshed by the provider), or to
+ * ENODATA when no hardware record was found.
+ *
+ * For CT_OFFLOAD_OP_POLICY, op->error is set to 0 when the connection is
+ * eligible for offload, or EPERM when no provider will accept it.
+ */
+void ct_offload_op_batch_init(struct ct_offload_op_batch *);
+void ct_offload_op_batch_add(struct ct_offload_op_batch *,
+                             enum ct_offload_op_type,
+                             const struct ct_offload_ctx *);
+void ct_offload_op_batch_submit(struct ct_offload_op_batch *);
+void ct_offload_op_batch_destroy(struct ct_offload_op_batch *);
+
+static inline
+size_t ct_offload_op_batch_len(struct ct_offload_op_batch *batch)
+{
+    return batch->n_ops;
+}
+
+static inline
+size_t ct_offload_op_batch_size(struct ct_offload_op_batch *batch)
+{
+    return batch->allocated;
+}
+
+#define CT_OFFLOAD_BATCH_OP_FOR_EACH(IDX, OP, BATCH) \
+    for (size_t IDX = 0; IDX < ct_offload_op_batch_len(BATCH); IDX++) \
+        if (OP = &((BATCH)->ops[IDX]), true)
+
 #endif /* CT_OFFLOAD_H */
