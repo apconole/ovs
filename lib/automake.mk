@@ -97,6 +97,8 @@ lib_libopenvswitch_la_SOURCES = \
 	lib/conntrack-other.c \
 	lib/conntrack.c \
 	lib/conntrack.h \
+	lib/ct-offload.c \
+	lib/ct-offload.h \
 	lib/cooperative-multitasking.c \
 	lib/cooperative-multitasking.h \
 	lib/cooperative-multitasking-private.h \
