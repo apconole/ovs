@@ -20,8 +20,10 @@
 #include "conntrack.h"
 #include "conntrack-private.h"
 #include "ct-offload.h"
+#include "dpif-offload.h"
 #include "ovs-thread.h"
 #include "util.h"
+#include "vswitch-idl.h"
 
 #include "openvswitch/list.h"
 #include "openvswitch/vlog.h"
@@ -50,6 +52,12 @@ static struct ovs_mutex ct_offload_mutex = OVS_MUTEX_INITIALIZER;
 static struct ovs_list  ct_offload_classes
     OVS_GUARDED_BY(ct_offload_mutex)
     = OVS_LIST_INITIALIZER(&ct_offload_classes);
+
+/* Built-in CT offload provider classes.  Only those whose name matches a
+ * registered dpif offload class will be activated by ct_offload_module_init().
+ */
+static const struct ct_offload_class *base_ct_offload_classes[] = {
+};
 
 
 /* ct_offload_register() - register a CT offload provider class.
@@ -140,11 +148,52 @@ ct_offload_alloc_private_slot(void)
 
 /* ct_offload_module_init() - register built-in CT offload providers.
  *
- * Must be called once before any connections are created. */
+ * Only registers providers whose name matches a currently-registered dpif
+ * offload class, so CT offload is automatically tied to the active hardware
+ * offload provider.  Safe to call multiple times; subsequent calls are
+ * no-ops (duplicate registration is detected and skipped). */
 void
 ct_offload_module_init(void)
 {
     ct_offload_alloc_private_slot();
+
+    for (int i = 0; i < ARRAY_SIZE(base_ct_offload_classes); i++) {
+        const struct ct_offload_class *class = base_ct_offload_classes[i];
+
+        if (dpif_offload_class_is_registered(class->name)) {
+            ct_offload_register(class);
+        }
+    }
+}
+
+/* ct_offload_enabled() - returns true when hardware offload is active.
+ *
+ * Delegates to dpif_offload_enabled() so CT offload shares the same global
+ * enable/disable knob as datapath hardware offload. */
+bool
+ct_offload_enabled(void)
+{
+    return dpif_offload_enabled();
+}
+
+/* ct_offload_set_global_cfg() - configure CT offload from OVSDB.
+ *
+ * Must be called alongside dpif_offload_set_global_cfg() so that CT offload
+ * providers are registered once hardware offload has been enabled and the
+ * appropriate dpif offload classes are known. */
+void
+ct_offload_set_global_cfg(const struct ovsrec_open_vswitch *cfg OVS_UNUSED)
+{
+    static struct ovsthread_once once = OVSTHREAD_ONCE_INITIALIZER;
+
+    if (!dpif_offload_enabled()) {
+        return;
+    }
+
+    if (ovsthread_once_start(&once)) {
+        ct_offload_module_init();
+        ovsthread_once_done(&once);
+    }
 }
 
 /* ct_offload_conn_add_() - notify all eligible providers of a new connection.

@@ -21,6 +21,7 @@
 
 struct conn;
 struct netdev;
+struct ovsrec_open_vswitch;
 
 /* Context for offload as part of the callbacks that all connection
  * offload APIs receive.
@@ -91,6 +92,13 @@ void ct_offload_unregister(const struct ct_offload_class *);
 void ct_offload_alloc_private_slot(void);
 /* Module initialization (register built-in providers). */
 void ct_offload_module_init(void);
+/* Global configuration: call alongside dpif_offload_set_global_cfg() to
+ * enable CT offload when hardware offload is active. */
+void ct_offload_set_global_cfg(const struct ovsrec_open_vswitch *);
+
+/* Returns true when CT offload is enabled (delegates to dpif_offload_enabled).
+ */
+bool ct_offload_enabled(void);
 
 /* Per-connection offload API that dispatches to all registered providers. */
 int       ct_offload_conn_add(const struct ct_offload_ctx *);
