@@ -585,13 +585,15 @@ conn_clean(struct conntrack *ct, struct conn *conn)
         atomic_count_dec(&zl->czl.count);
     }
 
-    struct ct_offload_ctx offload_ctx = {
-        .conn           = conn,
-        .netdev_in      = NULL,
-        .netdev_out     = NULL,
-        .input_port_id  = ODPP_NONE,
-    };
-    ct_offload_conn_del(&offload_ctx);
+    if (ct_offload_enabled()) {
+        struct ct_offload_ctx offload_ctx = {
+            .conn           = conn,
+            .netdev_in      = NULL,
+            .netdev_out     = NULL,
+            .input_port_id  = ODPP_NONE,
+        };
+        ct_offload_conn_del(&offload_ctx);
+    }
 
     ovsrcu_postpone(delete_conn, conn);
     atomic_count_dec(&ct->n_conn);
@@ -1436,7 +1438,7 @@ process_one(struct conntrack *ct, struct dp_packet *pkt,
         }
         ovs_mutex_unlock(&ct->ct_lock);
 
-        if (conn) {
+        if (conn && ct_offload_enabled()) {
             struct ct_offload_ctx offload_ctx = {
                 .conn           = conn,
                 .netdev_in      = NULL,
@@ -1597,7 +1599,6 @@ ct_sweep(struct conntrack *ct, struct rculist *list, long long now,
     size_t cleaned = 0;
     size_t count = 0;
 
-
     ct_offload_op_batch_init(&batch);
 
     RCULIST_FOR_EACH (conn, node, list) {
@@ -1612,7 +1613,6 @@ ct_sweep(struct conntrack *ct, struct rculist *list, long long now,
                     .netdev_out     = NULL,
                     .input_port_id  = ODPP_NONE,
                 };
-
                 ct_offload_op_batch_add(&batch, CT_OFFLOAD_OP_UPD,
                                         &offload_ctx);
             }
@@ -1620,12 +1620,14 @@ ct_sweep(struct conntrack *ct, struct rculist *list, long long now,
         count++;
     }
 
-    /* Run the batch. */
+    /* Run the batch: providers that can supply a hw last-used timestamp
+     * return error==0, allowing us to extend the expiration.  A non-zero
+     * error (typically ENODATA) means the connection has no hw activity
+     * and should be expired normally. */
     ct_offload_op_batch_submit(&batch);
 
     CT_OFFLOAD_BATCH_OP_FOR_EACH(idx, op, &batch) {
         struct conn *c = CONST_CAST(struct conn *, op->ctx.conn);
-
         if (op->error) {
             conn_clean(ct, c);
             cleaned++;

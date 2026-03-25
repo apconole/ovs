@@ -19,6 +19,8 @@
 
 #include "openvswitch/types.h"
 
+struct ovsrec_open_vswitch;
+
 struct conn;
 struct netdev;
 
@@ -81,8 +83,21 @@ struct ct_offload_class {
 int  ct_offload_register(const struct ct_offload_class *);
 void ct_offload_unregister(const struct ct_offload_class *);
 
-/* Module initialization — registers built-in providers. */
+/* Module initialization — registers built-in providers whose name matches
+ * an active dpif offload class. */
 void ct_offload_module_init(void);
+
+/* Global configuration — call alongside dpif_offload_set_global_cfg() to
+ * enable CT offload when hardware offload is active. */
+void ct_offload_set_global_cfg(const struct ovsrec_open_vswitch *);
+
+/* Returns true when CT offload is enabled (delegates to dpif_offload_enabled).
+ */
+bool ct_offload_enabled(void);
+
+#ifdef DPDK_NETDEV
+extern const struct ct_offload_class ct_offload_dpdk_class;
+#endif
 
 /* Per-connection offload API — dispatches to all registered providers. */
 int       ct_offload_conn_add(const struct ct_offload_ctx *);
