@@ -8630,6 +8630,8 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
         break;
 
     case OVS_ACTION_ATTR_CT: {
+        struct dp_netdev_port *in_port_p = NULL;;
+        struct netdev *in_netdev = NULL;
         const struct nlattr *b;
         bool force = false;
         bool commit = false;
@@ -8762,9 +8764,19 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
             VLOG_WARN_RL(&rl, "NAT specified without commit.");
         }
 
+        if (!dp_packet_batch_is_empty(packets_)) {
+            odp_port_t query_port = packets_->packets[0]->md.in_port.odp_port;
+            in_port_p = dp_netdev_lookup_port(dp, query_port);
+        }
+
+        if (in_port_p) {
+            in_netdev = in_port_p->netdev;
+        }
+
         conntrack_execute(dp->conntrack, packets_, aux->flow->dl_type, force,
                           commit, zone, setmark, setlabel, helper,
-                          nat_action_info_ref, pmd->ctx.now / 1000, tp_id);
+                          nat_action_info_ref, pmd->ctx.now / 1000, tp_id,
+                          in_netdev);
         break;
     }
 

@@ -198,7 +198,7 @@ ct_thread_main(void *aux_)
     ovs_barrier_block(&barrier);
     for (i = 0; i < n_pkts; i += batch_size) {
         conntrack_execute(ct, pkt_batch, dl_type, false, true, 0, NULL, NULL,
-                          NULL, NULL, now, 0);
+                          NULL, NULL, now, 0, NULL);
         DP_PACKET_BATCH_FOR_EACH (j, pkt, pkt_batch) {
             pkt_metadata_init_conn(&pkt->md);
         }
@@ -311,7 +311,7 @@ test_benchmark_zones(struct ovs_cmdl_context *ctx)
     for (i = 0; i < n_zones; i++) {
         for (j = 0; j < n_conns; j++) {
             conntrack_execute(ct, pkt_batch[j], dl_type, false, true, i,
-                              NULL, NULL, NULL, NULL, now, 0);
+                              NULL, NULL, NULL, NULL, now, 0, NULL);
             pkt_metadata_init_conn(&pkt_batch[j]->packets[0]->md);
         }
     }
@@ -334,7 +334,7 @@ test_benchmark_zones(struct ovs_cmdl_context *ctx)
         stopwatch_start(STOPWATCH_CT_EXECUTE_COMMIT, time_usec());
         for (j = 0; j < n_conns; j++) {
             conntrack_execute(ct, pkt_batch[j], dl_type, false, true, zone,
-                              NULL, NULL, NULL, NULL, now, 0);
+                              NULL, NULL, NULL, NULL, now, 0, NULL);
             pkt_metadata_init_conn(&pkt_batch[j]->packets[0]->md);
         }
         stopwatch_stop(STOPWATCH_CT_EXECUTE_COMMIT, time_usec());
@@ -343,7 +343,7 @@ test_benchmark_zones(struct ovs_cmdl_context *ctx)
         stopwatch_start(STOPWATCH_CT_EXECUTE_NO_COMMIT, time_usec());
         for (j = 0; j < n_conns; j++) {
             conntrack_execute(ct, pkt_batch[j], dl_type, false, false, zone,
-                              NULL, NULL, NULL, NULL, now, 0);
+                              NULL, NULL, NULL, NULL, now, 0, NULL);
             pkt_metadata_init_conn(&pkt_batch[j]->packets[0]->md);
         }
         stopwatch_stop(STOPWATCH_CT_EXECUTE_NO_COMMIT, time_usec());
@@ -419,7 +419,7 @@ pcap_batch_execute_conntrack(struct conntrack *ct_,
 
         if (flow.dl_type != dl_type) {
             conntrack_execute(ct_, &new_batch, dl_type, false, true, 0,
-                              NULL, NULL, NULL, NULL, now, 0);
+                              NULL, NULL, NULL, NULL, now, 0, NULL);
             dp_packet_batch_init(&new_batch);
         }
         dp_packet_batch_add(&new_batch, packet);
@@ -427,7 +427,7 @@ pcap_batch_execute_conntrack(struct conntrack *ct_,
 
     if (!dp_packet_batch_is_empty(&new_batch)) {
         conntrack_execute(ct_, &new_batch, dl_type, false, true, 0, NULL, NULL,
-                          NULL, NULL, now, 0);
+                          NULL, NULL, now, 0, NULL);
     }
 
 }
@@ -540,7 +540,7 @@ test_ftp_alg_large_payload(struct ovs_cmdl_context *ctx OVS_UNUSED)
     struct dp_packet_batch syn_batch;
     dp_packet_batch_init_packet(&syn_batch, syn);
     conntrack_execute(ct, &syn_batch, htons(ETH_TYPE_IP), false, true, 0,
-                      NULL, NULL, "ftp", &nat_info, now, 0);
+                      NULL, NULL, "ftp", &nat_info, now, 0, NULL);
     dp_packet_delete_batch(&syn_batch, true);
 
     /* We get to skip some of the processing because the conntrack execute
@@ -563,7 +563,7 @@ test_ftp_alg_large_payload(struct ovs_cmdl_context *ctx OVS_UNUSED)
     struct dp_packet_batch port_batch;
     dp_packet_batch_init_packet(&port_batch, port_pkt);
     conntrack_execute(ct, &port_batch, htons(ETH_TYPE_IP), false, true, 0,
-                      NULL, NULL, "ftp", &nat_info, now, 0);
+                      NULL, NULL, "ftp", &nat_info, now, 0, NULL);
 
     struct tcp_header *th = dp_packet_l4(port_pkt);
     size_t tcp_hdr_len = TCP_OFFSET(th->tcp_ctl) * 4;
@@ -660,7 +660,7 @@ test_private_destructor(struct ovs_cmdl_context *ctx OVS_UNUSED)
 
     long long now = time_msec();
     conntrack_execute(lct, &batch, dl_type, false, true, 0,
-                      NULL, NULL, NULL, NULL, now, 0);
+                      NULL, NULL, NULL, NULL, now, 0, NULL);
 
     /* After a committed execute the packet carries a cached conn pointer. */
     struct conn *conn = pkt->md.conn;
