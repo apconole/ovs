@@ -24,6 +24,7 @@
 
 #include "conntrack.h"
 #include "conntrack-private.h"
+#include "conntrack-tcp.h"
 #include "conntrack-tp.h"
 #include "coverage.h"
 #include "crc32c.h"
@@ -274,6 +275,7 @@ conntrack_init(void)
         l4_protos[IPPROTO_ICMP] = &ct_proto_icmp4;
         l4_protos[IPPROTO_ICMPV6] = &ct_proto_icmp6;
 
+        conntrack_tcp_init();
         conntrack_ftp_init();
         conntrack_tftp_init();
 
