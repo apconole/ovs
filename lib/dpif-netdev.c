@@ -8762,9 +8762,18 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
             VLOG_WARN_RL(&rl, "NAT specified without commit.");
         }
 
+        struct dp_netdev_port *in_port_p;
+        struct netdev *in_netdev = NULL;
+
+        in_port_p = dp_netdev_lookup_port(dp, packets_->packets[0]->md.in_port.odp_port);
+        if (in_port_p) {
+            in_netdev = in_port_p->netdev;
+        }
+
         conntrack_execute(dp->conntrack, packets_, aux->flow->dl_type, force,
                           commit, zone, setmark, setlabel, helper,
-                          nat_action_info_ref, pmd->ctx.now / 1000, tp_id);
+                          nat_action_info_ref, pmd->ctx.now / 1000, tp_id,
+                          in_netdev);
         break;
     }
 
