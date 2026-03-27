@@ -17,6 +17,8 @@
 #include <config.h>
 #include "conntrack.h"
 #include "conntrack-private.h"
+#include "ct-offload.h"
+#include "ct-offload-dummy.h"
 
 #include "dp-packet.h"
 #include "fatal-signal.h"
@@ -552,6 +554,159 @@ test_private_destructor(struct ovs_cmdl_context *ctx OVS_UNUSED)
     printf(".\n");
 }
 
+/* ===========================================================================
+ * CT offload dummy provider tests
+ *
+ * These tests exercise the ct_offload provider API directly without going
+ * through conntrack_execute.  The offload global-enable flag is deliberately
+ * not set here: the unit tests own the provider list and call the API
+ * functions directly.  End-to-end enablement (hw-offload=true via DB config)
+ * is covered by the dpif-netdev integration test.
+ *
+ * Each test must be run as a separate ovstest invocation so that the
+ * process-global provider list starts empty.
+ * ===========================================================================
+ */
+
+/* Synthetic conn pointer — the dummy only compares pointer addresses and
+ * never dereferences them, so a small integer cast is sufficient. */
+#define FAKE_CONN(n) ((struct conn *)(uintptr_t)(n))
+
+/* Test: offload-conn-add
+ * ----------------------
+ * Register the dummy provider, call ct_offload_conn_add() directly, and
+ * verify that the conn_add hook was invoked and the connection is tracked.
+ */
+static void
+test_offload_conn_add(struct ovs_cmdl_context *ctx OVS_UNUSED)
+{
+    ct_offload_dummy_register();
+
+    struct conn *fake = FAKE_CONN(1);
+    struct ct_offload_ctx offload_ctx = {
+        .conn = fake, .netdev_in = NULL, .netdev_out = NULL,
+    };
+    ct_offload_conn_add(&offload_ctx);
+
+    if (ct_offload_dummy_n_added() != 1) {
+        fprintf(stderr, "expected n_added=1, got %u\n",
+                ct_offload_dummy_n_added());
+        abort();
+    }
+    if (!ct_offload_dummy_contains(fake)) {
+        fprintf(stderr, "dummy does not contain the added connection\n");
+        abort();
+    }
+
+    ct_offload_dummy_unregister();
+    printf(".\n");
+}
+
+/* Test: offload-conn-del
+ * ----------------------
+ * Register the dummy, add then delete a connection via the API, and verify
+ * that conn_del was called and the connection is no longer tracked.
+ */
+static void
+test_offload_conn_del(struct ovs_cmdl_context *ctx OVS_UNUSED)
+{
+    ct_offload_dummy_register();
+
+    struct conn *fake = FAKE_CONN(1);
+    struct ct_offload_ctx offload_ctx = {
+        .conn = fake, .netdev_in = NULL, .netdev_out = NULL,
+    };
+
+    ct_offload_conn_add(&offload_ctx);
+    if (ct_offload_dummy_n_added() != 1) {
+        fprintf(stderr, "expected n_added=1, got %u\n",
+                ct_offload_dummy_n_added());
+        abort();
+    }
+
+    ct_offload_conn_del(&offload_ctx);
+    if (ct_offload_dummy_n_deleted() != 1) {
+        fprintf(stderr, "expected n_deleted=1, got %u\n",
+                ct_offload_dummy_n_deleted());
+        abort();
+    }
+    if (ct_offload_dummy_contains(fake)) {
+        fprintf(stderr, "dummy still contains connection after del\n");
+        abort();
+    }
+
+    ct_offload_dummy_unregister();
+    printf(".\n");
+}
+
+/* Test: offload-conn-update
+ * -------------------------
+ * Register the dummy, add a connection, call ct_offload_conn_update()
+ * directly, and verify that a non-zero last-used timestamp is returned.
+ */
+static void
+test_offload_conn_update(struct ovs_cmdl_context *ctx OVS_UNUSED)
+{
+    ct_offload_dummy_register();
+
+    struct conn *fake = FAKE_CONN(1);
+    struct ct_offload_ctx offload_ctx = {
+        .conn = fake, .netdev_in = NULL, .netdev_out = NULL,
+    };
+
+    ct_offload_conn_add(&offload_ctx);
+
+    long long ts = ct_offload_conn_update(&offload_ctx);
+    if (ts == 0) {
+        fprintf(stderr, "ct_offload_conn_update returned 0 (expected "
+                        "non-zero last-used timestamp)\n");
+        abort();
+    }
+    if (ct_offload_dummy_n_updated() != 1) {
+        fprintf(stderr, "expected n_updated=1, got %u\n",
+                ct_offload_dummy_n_updated());
+        abort();
+    }
+
+    ct_offload_dummy_unregister();
+    printf(".\n");
+}
+
+/* Test: offload-multi-conn
+ * ------------------------
+ * Register the dummy, add N connections via the API, and verify that each
+ * is tracked independently.
+ */
+#define OFFLOAD_MULTI_N 4
+
+static void
+test_offload_multi_conn(struct ovs_cmdl_context *ctx OVS_UNUSED)
+{
+    ct_offload_dummy_register();
+
+    for (unsigned i = 1; i <= OFFLOAD_MULTI_N; i++) {
+        struct ct_offload_ctx offload_ctx = {
+            .conn = FAKE_CONN(i), .netdev_in = NULL, .netdev_out = NULL,
+        };
+        ct_offload_conn_add(&offload_ctx);
+    }
+
+    if (ct_offload_dummy_n_added() != OFFLOAD_MULTI_N) {
+        fprintf(stderr, "expected n_added=%d, got %u\n",
+                OFFLOAD_MULTI_N, ct_offload_dummy_n_added());
+        abort();
+    }
+    for (unsigned i = 1; i <= OFFLOAD_MULTI_N; i++) {
+        if (!ct_offload_dummy_contains(FAKE_CONN(i))) {
+            fprintf(stderr, "dummy missing connection %u\n", i);
+            abort();
+        }
+    }
+
+    ct_offload_dummy_unregister();
+    printf(".\n");
+}
+
 static const struct ovs_cmdl_command commands[] = {
     /* Connection tracker tests. */
     /* Starts 'n_threads' threads. Each thread will send 'n_pkts' packets to
@@ -579,6 +734,17 @@ static const struct ovs_cmdl_command commands[] = {
      test_private_id_exhaustion, OVS_RO},
     {"private-destructor", "", 0, 0,
      test_private_destructor, OVS_RO},
+
+    /* CT offload dummy provider tests.
+     * Each must be run as a separate ovstest invocation. */
+    {"offload-conn-add", "", 0, 0,
+     test_offload_conn_add, OVS_RO},
+    {"offload-conn-del", "", 0, 0,
+     test_offload_conn_del, OVS_RO},
+    {"offload-conn-update", "", 0, 0,
+     test_offload_conn_update, OVS_RO},
+    {"offload-multi-conn", "", 0, 0,
+     test_offload_multi_conn, OVS_RO},
 
     {NULL, NULL, 0, 0, NULL, OVS_RO},
 };

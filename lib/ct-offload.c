@@ -53,6 +53,10 @@ static struct ovs_list  ct_offload_classes
  * registered dpif offload class will be activated by ct_offload_module_init().
  */
 static const struct ct_offload_class *base_ct_offload_classes[] = {
+    /* Dummy provider: activated whenever the "dummy" dpif offload class is
+     * registered (hw-offload=true with a dummy datapath).  Also used directly
+     * by unit tests via ct_offload_dummy_register(). */
+    &ct_offload_dummy_class,
 #ifdef DPDK_NETDEV
     &ct_offload_dpdk_class,
 #endif

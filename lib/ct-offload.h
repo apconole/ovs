@@ -95,6 +95,12 @@ void ct_offload_set_global_cfg(const struct ovsrec_open_vswitch *);
  */
 bool ct_offload_enabled(void);
 
+/* Dummy (software-only) CT offload provider — always compiled in.
+ * Registered automatically when the "dummy" dpif offload class is active
+ * (e.g. hw-offload=true with a dummy datapath), and available directly for
+ * unit tests via ct_offload_dummy_register() in ct-offload-dummy.h. */
+extern const struct ct_offload_class ct_offload_dummy_class;
+
 #ifdef DPDK_NETDEV
 extern const struct ct_offload_class ct_offload_dpdk_class;
 #endif
