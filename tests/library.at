@@ -325,3 +325,39 @@ AT_KEYWORDS([conntrack])
 AT_CHECK([ovstest test-conntrack private-destructor], [0], [.
 ])
 AT_CLEANUP
+
+AT_SETUP([conntrack offload dummy - conn add hook])
+AT_KEYWORDS([conntrack offload])
+AT_CHECK([ovstest test-conntrack offload-conn-add], [0], [.
+])
+AT_CLEANUP
+
+AT_SETUP([conntrack offload dummy - conn del hook])
+AT_KEYWORDS([conntrack offload])
+AT_CHECK([ovstest test-conntrack offload-conn-del], [0], [.
+])
+AT_CLEANUP
+
+AT_SETUP([conntrack offload dummy - conn update hook])
+AT_KEYWORDS([conntrack offload])
+AT_CHECK([ovstest test-conntrack offload-conn-update], [0], [.
+])
+AT_CLEANUP
+
+AT_SETUP([conntrack offload dummy - multiple connections])
+AT_KEYWORDS([conntrack offload])
+AT_CHECK([ovstest test-conntrack offload-multi-conn], [0], [.
+])
+AT_CLEANUP
+
+AT_SETUP([conntrack offload dummy - conn established hook (end-to-end)])
+AT_KEYWORDS([conntrack offload])
+AT_CHECK([ovstest test-conntrack offload-conn-established], [0], [.
+])
+AT_CLEANUP
+
+AT_SETUP([conntrack offload dummy - conn established fires exactly once (API)])
+AT_KEYWORDS([conntrack offload])
+AT_CHECK([ovstest test-conntrack offload-conn-established-api], [0], [.
+])
+AT_CLEANUP

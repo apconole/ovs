@@ -50,6 +50,14 @@ filter_hw_packet_netdev_dummy () {
         | sort | uniq
 }
 
+filter_ct_offload_dummy_conn_add () {
+    grep 'ct_offload_dummy.*conn add:' | sed 's/.*|DBG|//' | sort | uniq
+}
+
+filter_ct_offload_dummy_conn_del () {
+    grep 'ct_offload_dummy.*conn del:' | sed 's/.*|DBG|//' | sort | uniq
+}
+
 filter_flow_dump () {
     grep 'flow_dump ' | sed '
         s/.*flow_dump //
@@ -3705,6 +3713,70 @@ flow_expected_v6=$(echo "${flow_s_v6}" | \
 good_expected_v6=$(ovs-ofctl compose-packet --bare "${flow_expected_v6}")
 AT_CHECK([ovs-pcap p1.pcap > p1.pcap.txt 2>&1])
 AT_CHECK_UNQUOTED([tail -n 1 p1.pcap.txt], [0], [${good_expected_v6}
+])
+
+OVS_VSWITCHD_STOP
+AT_CLEANUP
+
+dnl Test that the CT offload dummy provider receives conn_add and conn_del
+dnl callbacks when packets are processed through a conntrack commit flow on a
+dnl dummy datapath with hw-offload enabled.
+AT_SETUP([dpif-netdev - conntrack offload dummy])
+AT_KEYWORDS([conntrack offload])
+OVS_VSWITCHD_START(
+  [add-port br0 p1 -- \
+   set interface p1 type=dummy ofport_request=1 \
+                    options:pstream=punix:$OVS_RUNDIR/p1.sock \
+                    options:ifindex=1100 -- \
+   add-port br0 p2 -- \
+   set interface p2 type=dummy ofport_request=2 \
+                    options:pstream=punix:$OVS_RUNDIR/p2.sock \
+                    options:ifindex=1101 -- \
+   set bridge br0 datapath-type=dummy \
+                  other-config:datapath-id=1234 fail-mode=secure], [], [], [])
+
+dnl Enable debug logging for the dpif offload and CT offload dummy modules so
+dnl the test can detect hook calls via log grep.
+AT_CHECK([ovs-appctl vlog/set dpif_offload_dummy:file:dbg ct_offload_dummy:file:dbg])
+
+dnl Enable hardware offload — this registers the "dummy" dpif offload class
+dnl and automatically activates the CT offload dummy provider.
+AT_CHECK([ovs-vsctl set Open_vSwitch . other_config:hw-offload=true])
+OVS_WAIT_UNTIL([grep "Flow HW offload is enabled" ovs-vswitchd.log])
+
+dnl Add a two-table conntrack flow:
+dnl  table 0: untracked packets → ct(commit) recirculate to table 1
+dnl  table 1: tracked packets   → output on p2
+AT_CHECK([ovs-ofctl add-flow br0 \
+  'table=0,priority=100,in_port=p1,ip,ct_state=-trk,actions=ct(commit,table=1)'])
+AT_CHECK([ovs-ofctl add-flow br0 \
+  'table=1,priority=100,in_port=p1,ip,ct_state=+trk,actions=output:p2'])
+
+dnl Compose and inject a UDP packet on p1.  The first packet misses the
+dnl datapath, causes an upcall, executes ct(commit) to create a conntrack
+dnl entry, and triggers the ct_offload_dummy conn_add callback.
+flow_s="eth_src=50:54:00:00:00:01,eth_dst=50:54:00:00:00:02,udp,ip_src=10.0.0.1,ip_dst=10.0.0.2,ip_frag=no,udp_src=1000,udp_dst=2000"
+pkt=$(ovs-ofctl compose-packet --bare "${flow_s}")
+AT_CHECK([ovs-appctl netdev-dummy/receive p1 "${pkt}"])
+
+dnl Wait for the CT offload dummy conn_add hook to fire.
+OVS_WAIT_UNTIL([grep 'ct_offload_dummy.*conn add:' ovs-vswitchd.log])
+
+dnl Verify exactly one connection was added.
+AT_CHECK([filter_ct_offload_dummy_conn_add < ovs-vswitchd.log | wc -l | tr -d ' '],
+  [0], [1
+])
+
+dnl Flush all conntrack entries — conn_clean is called for every tracked
+dnl connection, which invokes ct_offload_conn_del on each registered provider.
+AT_CHECK([ovs-appctl dpctl/flush-conntrack])
+
+dnl Wait for the CT offload dummy conn_del hook to fire.
+OVS_WAIT_UNTIL([grep 'ct_offload_dummy.*conn del:' ovs-vswitchd.log])
+
+dnl Verify exactly one connection was deleted.
+AT_CHECK([filter_ct_offload_dummy_conn_del < ovs-vswitchd.log | wc -l | tr -d ' '],
+  [0], [1
 ])
 
 OVS_VSWITCHD_STOP
