@@ -91,6 +91,10 @@ long long ct_offload_conn_update(const struct ct_offload_ctx *);
 bool      ct_offload_can_offload(const struct ct_offload_ctx *);
 void      ct_offload_flush(void);
 
+/* Returns true if 'conn' has been successfully offloaded to hardware.
+ * Set by ct_offload_conn_add() on success; cleared by ct_offload_conn_del(). */
+bool      ct_offload_conn_is_offloaded(const struct conn *);
+
 /* Batch offload API.
  *
  * The default implementation dispatches each operation individually using the
