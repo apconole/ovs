@@ -177,6 +177,9 @@ enum ct_ephemeral_range {
     MAX_NAT_EPHEMERAL_PORT = 65535
 };
 
+/* The maximum TCP or UDP port number. */
+#define CT_MAX_L4_PORT 65535
+
 #define IN_RANGE(curr, min, max) \
     (curr >= min && curr <= max)
 
@@ -261,6 +264,9 @@ enum ct_alg_ctl_type {
     /* SIP is not enabled through OpenFlow and is present only as an example
      * of an ALG that allows a wildcard source IP address. */
     CT_ALG_CTL_SIP,
+
+    /* MAX ALG */
+    CT_ALG_CTL_MAX,
 };
 
 extern struct ct_l4_proto ct_proto_tcp;
@@ -288,6 +294,28 @@ struct conn_lookup_ctx {
     bool reply;
     bool icmp_related;
 };
+
+/* FTP control-packet classification used by ALG helpers.
+ * CT_FTP_CTL_INTEREST carries an address/port specifier (PORT, PASV, EPRT,
+ * EPSV); CT_FTP_CTL_OTHER does not; CT_FTP_CTL_INVALID is malformed. */
+enum ftp_ctl_pkt {
+    CT_FTP_CTL_INTEREST,
+    CT_FTP_CTL_OTHER,
+    CT_FTP_CTL_INVALID,
+};
+
+/* ALG helper callback signature.  Each registered helper receives the
+ * classified control-packet type so it can decide whether to act. */
+typedef void (*alg_helper)(struct conntrack *ct,
+                           const struct conn_lookup_ctx *ctx,
+                           struct dp_packet *pkt,
+                           struct conn *conn_for_expectation,
+                           long long now, enum ftp_ctl_pkt ftp_ctl,
+                           bool nat);
+
+/* Array indexed by ct_alg_ctl_type; populated by per-module init functions
+ * (conntrack_ftp_init, conntrack_tftp_init, ...) before first use. */
+extern alg_helper alg_helpers[];
 
 /* conn_update_state_dist() hook
  *
@@ -322,6 +350,20 @@ enum conn_update_state_hook_priority {
 void conn_update_state_hook_register(int priority,
                                      conn_update_state_hook_fn);
 void conn_update_state_hook_unregister(conn_update_state_hook_fn);
+
+/* Functions in conntrack.c that ALG modules need. */
+bool conn_update_state(struct conntrack *ct, struct dp_packet *pkt,
+                       struct conn_lookup_ctx *ctx, struct conn *conn,
+                       long long now);
+void conn_seq_skew_set(struct conntrack *ct, const struct conn *conn_in,
+                       long long now, int seq_skew, bool seq_skew_dir);
+void expectation_create(struct conntrack *ct, ovs_be16 dst_port,
+                        const struct conn *parent_conn, bool reply,
+                        bool src_ip_wc, bool skip_nat);
+
+/* ALG module initialization functions. */
+void conntrack_ftp_init(void);
+void conntrack_tftp_init(void);
 
 /* conn_private_get() / conn_private_set()
  *
