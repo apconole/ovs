@@ -3,6 +3,7 @@
  * Copyright (c) 2002 - 2008 Henning Brauer
  * Copyright (c) 2012 Gleb Smirnoff <glebius@FreeBSD.org>
  * Copyright (c) 2015, 2016 Nicira, Inc.
+ * Copyright (c) 2026 Red Hat, Inc.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -39,6 +40,7 @@
 #include <config.h>
 
 #include "conntrack-private.h"
+#include "conntrack-tcp.h"
 #include "conntrack-tp.h"
 #include "coverage.h"
 #include "ct-dpif.h"
@@ -49,18 +51,7 @@ COVERAGE_DEFINE(conntrack_tcp_seq_chk_bypass);
 COVERAGE_DEFINE(conntrack_tcp_seq_chk_failed);
 COVERAGE_DEFINE(conntrack_invalid_tcp_flags);
 
-struct tcp_peer {
-    uint32_t               seqlo;          /* Max sequence number sent     */
-    uint32_t               seqhi;          /* Max the other end ACKd + win */
-    uint16_t               max_win;        /* largest window (pre scaling) */
-    uint8_t                wscale;         /* window scaling factor        */
-    enum ct_dpif_tcp_state state;
-};
-
-struct conn_tcp {
-    struct conn up;
-    struct tcp_peer peer[2]; /* 'conn' lock protected. */
-};
+ct_private_id_t conntrack_tcp_private_id = CT_PRIVATE_ID_INVALID;
 
 enum {
     TCPOPT_EOL,
@@ -78,12 +69,6 @@ enum {
 
 #define SEQ_MIN(a, b)   INT_MOD_MIN(a, b)
 #define SEQ_MAX(a, b)   INT_MOD_MAX(a, b)
-
-static struct conn_tcp*
-conn_tcp_cast(const struct conn* conn)
-{
-    return CONTAINER_OF(conn, struct conn_tcp, up);
-}
 
 /* pf does this in in pf_normalize_tcp(), and it is called only if scrub
  * is enabled.  We're not scrubbing, but this check seems reasonable.  */
@@ -113,9 +98,6 @@ tcp_invalid_flags(uint16_t flags)
 }
 
 #define TCP_MAX_WSCALE 14
-#define CT_WSCALE_FLAG 0x80
-#define CT_WSCALE_UNKNOWN 0x40
-#define CT_WSCALE_MASK 0xf
 
 static uint8_t
 tcp_get_wscale(const struct tcp_header *tcp)
@@ -164,7 +146,7 @@ static enum ct_update_res
 tcp_conn_update(struct conntrack *ct, struct conn *conn_,
                 struct dp_packet *pkt, bool reply, long long now)
 {
-    struct conn_tcp *conn = conn_tcp_cast(conn_);
+    struct conn_tcp_state *conn = conn_tcp_state_get(conn_);
     struct tcp_header *tcp = dp_packet_l4(pkt);
     /* The peer that sent 'pkt' */
     struct tcp_peer *src = &conn->peer[reply ? 1 : 0];
@@ -189,7 +171,7 @@ tcp_conn_update(struct conntrack *ct, struct conn *conn_,
             return CT_UPDATE_NEW;
         } else if (src->state <= CT_DPIF_TCPS_SYN_SENT) {
             src->state = CT_DPIF_TCPS_SYN_SENT;
-            conn_update_expiration(ct, &conn->up, CT_TM_TCP_FIRST_PACKET, now);
+            conn_update_expiration(ct, conn_, CT_TM_TCP_FIRST_PACKET, now);
             return CT_UPDATE_VALID_NEW;
         }
     }
@@ -340,18 +322,18 @@ tcp_conn_update(struct conntrack *ct, struct conn *conn_,
 
         if (src->state >= CT_DPIF_TCPS_FIN_WAIT_2
             && dst->state >= CT_DPIF_TCPS_FIN_WAIT_2) {
-            conn_update_expiration(ct, &conn->up, CT_TM_TCP_CLOSED, now);
+            conn_update_expiration(ct, conn_, CT_TM_TCP_CLOSED, now);
         } else if (src->state >= CT_DPIF_TCPS_CLOSING
                    && dst->state >= CT_DPIF_TCPS_CLOSING) {
-            conn_update_expiration(ct, &conn->up, CT_TM_TCP_FIN_WAIT, now);
+            conn_update_expiration(ct, conn_, CT_TM_TCP_FIN_WAIT, now);
         } else if (src->state < CT_DPIF_TCPS_ESTABLISHED
                    || dst->state < CT_DPIF_TCPS_ESTABLISHED) {
-            conn_update_expiration(ct, &conn->up, CT_TM_TCP_OPENING, now);
+            conn_update_expiration(ct, conn_, CT_TM_TCP_OPENING, now);
         } else if (src->state >= CT_DPIF_TCPS_CLOSING
                    || dst->state >= CT_DPIF_TCPS_CLOSING) {
-            conn_update_expiration(ct, &conn->up, CT_TM_TCP_CLOSING, now);
+            conn_update_expiration(ct, conn_, CT_TM_TCP_CLOSING, now);
         } else {
-            conn_update_expiration(ct, &conn->up, CT_TM_TCP_ESTABLISHED, now);
+            conn_update_expiration(ct, conn_, CT_TM_TCP_ESTABLISHED, now);
         }
     } else if ((dst->state < CT_DPIF_TCPS_SYN_SENT
                 || dst->state >= CT_DPIF_TCPS_FIN_WAIT_2
@@ -439,15 +421,14 @@ static struct conn *
 tcp_new_conn(struct conntrack *ct, struct dp_packet *pkt, long long now,
              uint32_t tp_id)
 {
-    struct conn_tcp* newconn = NULL;
     struct tcp_header *tcp = dp_packet_l4(pkt);
+    struct conn_tcp_state *tcp_state;
     struct tcp_peer *src, *dst;
     uint16_t tcp_flags = TCP_FLAGS(tcp->tcp_ctl);
 
-    newconn = xzalloc(sizeof *newconn);
-
-    src = &newconn->peer[0];
-    dst = &newconn->peer[1];
+    tcp_state = xzalloc(sizeof *tcp_state);
+    src = &tcp_state->peer[0];
+    dst = &tcp_state->peer[1];
 
     src->seqlo = ntohl(get_16aligned_be32(&tcp->tcp_seq));
     src->seqhi = src->seqlo + dp_packet_get_tcp_payload_length(pkt) + 1;
@@ -473,10 +454,12 @@ tcp_new_conn(struct conntrack *ct, struct dp_packet *pkt, long long now,
     src->state = CT_DPIF_TCPS_SYN_SENT;
     dst->state = CT_DPIF_TCPS_CLOSED;
 
-    newconn->up.tp_id = tp_id;
-    conn_init_expiration(ct, &newconn->up, CT_TM_TCP_FIRST_PACKET, now);
+    struct conn *newconn = xzalloc(sizeof *newconn);
+    newconn->tp_id = tp_id;
+    conn_private_set(newconn, conntrack_tcp_private_id, tcp_state);
+    conn_init_expiration(ct, newconn, CT_TM_TCP_FIRST_PACKET, now);
 
-    return &newconn->up;
+    return newconn;
 }
 
 static uint8_t
@@ -499,7 +482,7 @@ static void
 tcp_conn_get_protoinfo(const struct conn *conn_,
                        struct ct_dpif_protoinfo *protoinfo)
 {
-    const struct conn_tcp *conn = conn_tcp_cast(conn_);
+    const struct conn_tcp_state *conn = conn_tcp_state_get(conn_);
 
     protoinfo->proto = IPPROTO_TCP;
     protoinfo->tcp.state_orig = conn->peer[0].state;
@@ -518,3 +501,10 @@ struct ct_l4_proto ct_proto_tcp = {
     .conn_update = tcp_conn_update,
     .conn_get_protoinfo = tcp_conn_get_protoinfo,
 };
+
+
+void
+conntrack_tcp_init(void)
+{
+    conntrack_tcp_private_id = conn_private_id_alloc(free);
+}
