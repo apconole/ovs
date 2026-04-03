@@ -17,6 +17,8 @@
 #include <config.h>
 #include <errno.h>
 
+#include "conntrack.h"
+#include "conntrack-private.h"
 #include "ct-offload.h"
 #include "ovs-thread.h"
 #include "util.h"
@@ -25,6 +27,15 @@
 #include "openvswitch/vlog.h"
 
 VLOG_DEFINE_THIS_MODULE(ct_offload);
+
+/* Private data slot used to mark connections that have been successfully
+ * offloaded.  Allocated once at module init; no destructor needed because
+ * the stored value is a plain integer cast to pointer, not heap data. */
+static ct_private_id_t ct_offload_private_id = CT_PRIVATE_ID_INVALID;
+
+#define CT_OFFLOAD_STATE_NONE  ((void *) 0)
+#define CT_OFFLOAD_STATE_ADDED ((void *) 1)
+#define CT_OFFLOAD_STATE_EST   ((void *) 2)
 
 /* Node in the registered-provider list. */
 struct ct_offload_class_node {
@@ -111,14 +122,29 @@ out:
     ovs_mutex_unlock(&ct_offload_mutex);
 }
 
+void
+ct_offload_alloc_private_slot(void)
+{
+    static struct ovsthread_once once_enable = OVSTHREAD_ONCE_INITIALIZER;
+
+    if (ovsthread_once_start(&once_enable)) {
+        /* Allocate the per-connection private slot. */
+        ct_offload_private_id = conn_private_id_alloc(NULL);
+        if (ct_offload_private_id == CT_PRIVATE_ID_INVALID) {
+            VLOG_ERR("failed to allocate ct offload private id: "
+                     "is-offloaded tracking disabled");
+        }
+        ovsthread_once_done(&once_enable);
+    }
+}
+
 /* ct_offload_module_init() - register built-in CT offload providers.
  *
  * Must be called once before any connections are created. */
 void
 ct_offload_module_init(void)
 {
-    /* No built-in providers yet; third parties call ct_offload_register()
-     * directly from their own module-init routines. */
+    ct_offload_alloc_private_slot();
 }
 
 /* ct_offload_conn_add_() - notify all eligible providers of a new connection.
@@ -155,6 +181,11 @@ ct_offload_conn_add_(const struct ct_offload_ctx *ctx, bool batched)
                 ret = error;
             }
         }
+    }
+
+    if (!ret && ct_offload_private_id != CT_PRIVATE_ID_INVALID) {
+        conn_private_set(CONST_CAST(struct conn *, ctx->conn),
+                         ct_offload_private_id, CT_OFFLOAD_STATE_ADDED);
     }
 
     return ret;
@@ -195,6 +226,11 @@ ct_offload_conn_del_(const struct ct_offload_ctx *ctx, bool batched)
             class->conn_del(ctx);
         }
     }
+
+    if (ct_offload_private_id != CT_PRIVATE_ID_INVALID) {
+        conn_private_set(CONST_CAST(struct conn *, ctx->conn),
+                         ct_offload_private_id, CT_OFFLOAD_STATE_NONE);
+    }
 }
 
 void
@@ -208,7 +244,18 @@ ct_offload_conn_del(const struct ct_offload_ctx *ctx)
 static int
 ct_offload_conn_established_(const struct ct_offload_ctx *ctx, bool batched)
 {
+    static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(600, 600);
     struct ct_offload_class_node *node;
+
+    if (ct_offload_private_id == CT_PRIVATE_ID_INVALID) {
+        VLOG_WARN_RL(&rl, "ct_offload id not allocted: always sending est.");
+        return EAGAIN;
+    }
+
+    if (conn_private_get(ctx->conn, ct_offload_private_id) !=
+        CT_OFFLOAD_STATE_ADDED) {
+        return EALREADY;
+    }
 
     LIST_FOR_EACH (node, list_node, &ct_offload_classes) {
         const struct ct_offload_class *class = node->class;
@@ -225,6 +272,8 @@ ct_offload_conn_established_(const struct ct_offload_ctx *ctx, bool batched)
         }
     }
 
+    conn_private_set(CONST_CAST(struct conn *, ctx->conn),
+                     ct_offload_private_id, CT_OFFLOAD_STATE_EST);
     return 0;
 }
 
@@ -451,6 +500,34 @@ ct_offload_op_batch_submit(struct ct_offload_op_batch *batch)
         }
     }
     ovs_mutex_unlock(&ct_offload_mutex);
+}
+
+/* ct_offload_conn_is_offloaded() - return true if conn is currently offloaded.
+ *
+ * Reads the private slot set by ct_offload_conn_add() on success and cleared
+ * by ct_offload_conn_del().  Returns false when the private slot could not be
+ * allocated at init time. */
+bool
+ct_offload_conn_is_offloaded(const struct conn *conn)
+{
+    if (ct_offload_private_id == CT_PRIVATE_ID_INVALID) {
+        return false;
+    }
+    return conn_private_get(conn, ct_offload_private_id) !=
+        CT_OFFLOAD_STATE_NONE;
+}
+
+/* ct_offload_conn_is_established() - return true if conn transitioned to
+ * established state.  Returns false when the private slot could not be
+ * allocated at init time. */
+bool
+ct_offload_conn_is_established(const struct conn *conn)
+{
+    if (ct_offload_private_id == CT_PRIVATE_ID_INVALID) {
+        return false;
+    }
+    return conn_private_get(conn, ct_offload_private_id) ==
+        CT_OFFLOAD_STATE_EST;
 }
 
 /* ct_offload_op_batch_destroy() - release memory held by the batch.
