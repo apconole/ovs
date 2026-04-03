@@ -55,14 +55,6 @@ COVERAGE_DEFINE(conntrack_l4csum_err);
 COVERAGE_DEFINE(conntrack_lookup_natted_miss);
 COVERAGE_DEFINE(conntrack_zone_full);
 
-struct conn_lookup_ctx {
-    struct conn_key key;
-    struct conn *conn;
-    uint32_t hash;
-    bool reply;
-    bool icmp_related;
-};
-
 enum ftp_ctl_pkt {
     /* Control packets with address and/or port specifiers. */
     CT_FTP_CTL_INTEREST,
@@ -75,15 +67,6 @@ enum ct_alg_mode {
     CT_FTP_MODE_ACTIVE,
     CT_FTP_MODE_PASSIVE,
     CT_TFTP_MODE,
-};
-
-enum ct_alg_ctl_type {
-    CT_ALG_CTL_NONE,
-    CT_ALG_CTL_FTP,
-    CT_ALG_CTL_TFTP,
-    /* SIP is not enabled through Openflow and presently only used as
-     * an example of an alg that allows a wildcard src ip. */
-    CT_ALG_CTL_SIP,
 };
 
 struct zone_limit {
@@ -169,6 +152,29 @@ struct ct_private_slot {
 
 static struct ct_private_slot ct_private_slots[CT_CONN_PRIVATE_MAX];
 static atomic_uint32_t ct_private_next_id = 0;
+
+/* conn_update_state_dist() hook registry.
+ *
+ * Written once at module initialisation (under ovsthread_once), then
+ * read-only during packet processing, so no additional locking is needed.
+ * Entries are kept sorted by ascending priority so conn_update_state_dist()
+ * can iterate in order without extra bookkeeping.
+ */
+#define CT_UPDATE_STATE_HOOKS_MAX 8
+
+struct ct_update_hook {
+    int priority;
+    conn_update_state_hook_fn fn;
+};
+
+static struct ct_update_hook ct_update_hooks[CT_UPDATE_STATE_HOOKS_MAX];
+static size_t n_ct_update_hooks;
+
+static bool ftp_conn_update_state_hook(struct conntrack *, struct dp_packet *,
+                                       struct conn_lookup_ctx *, struct conn *,
+                                       const struct nat_action_info_t *,
+                                       enum ct_alg_ctl_type, long long,
+                                       bool *);
 
 static void
 handle_ftp_ctl(struct conntrack *ct, const struct conn_lookup_ctx *ctx,
@@ -304,6 +310,9 @@ conntrack_init(void)
         l4_protos[IPPROTO_TCP] = &ct_proto_tcp;
         l4_protos[IPPROTO_ICMP] = &ct_proto_icmp4;
         l4_protos[IPPROTO_ICMPV6] = &ct_proto_icmp6;
+
+        conn_update_state_hook_register(CT_HOOK_PRI_NORMAL,
+                                        ftp_conn_update_state_hook);
 
         ovsthread_once_done(&setup_l4_once);
     }
@@ -1314,37 +1323,55 @@ check_orig_tuple(struct conntrack *ct, struct dp_packet *pkt,
 }
 
 static bool
-conn_update_state_alg(struct conntrack *ct, struct dp_packet *pkt,
-                      struct conn_lookup_ctx *ctx, struct conn *conn,
-                      const struct nat_action_info_t *nat_action_info,
-                      enum ct_alg_ctl_type ct_alg_ctl, long long now,
-                      bool *create_new_conn)
+ftp_conn_update_state_hook(struct conntrack *ct, struct dp_packet *pkt,
+                           struct conn_lookup_ctx *ctx, struct conn *conn,
+                           const struct nat_action_info_t *nat_action_info,
+                           enum ct_alg_ctl_type ct_alg_ctl, long long now,
+                           bool *create_new_conn)
 {
-    if (is_ftp_ctl(ct_alg_ctl)) {
-        /* Keep sequence tracking in sync with the source of the
-         * sequence skew. */
+    if (!is_ftp_ctl(ct_alg_ctl)) {
+        return false;
+    }
+
+    /* Keep sequence tracking in sync with the source of the sequence skew. */
+    ovs_mutex_lock(&conn->lock);
+    if (ctx->reply != conn->seq_skew_dir) {
+        handle_ftp_ctl(ct, ctx, pkt, conn, now, CT_FTP_CTL_OTHER,
+                       !!nat_action_info);
+        /* conn_update_state acquires conn->lock for unrelated fields. */
+        ovs_mutex_unlock(&conn->lock);
+        *create_new_conn = conn_update_state(ct, pkt, ctx, conn, now);
+    } else {
+        ovs_mutex_unlock(&conn->lock);
+        *create_new_conn = conn_update_state(ct, pkt, ctx, conn, now);
         ovs_mutex_lock(&conn->lock);
-        if (ctx->reply != conn->seq_skew_dir) {
+        if (!*create_new_conn) {
             handle_ftp_ctl(ct, ctx, pkt, conn, now, CT_FTP_CTL_OTHER,
                            !!nat_action_info);
-            /* conn_update_state locks for unrelated fields, so unlock. */
-            ovs_mutex_unlock(&conn->lock);
-            *create_new_conn = conn_update_state(ct, pkt, ctx, conn, now);
-        } else {
-            /* conn_update_state locks for unrelated fields, so unlock. */
-            ovs_mutex_unlock(&conn->lock);
-            *create_new_conn = conn_update_state(ct, pkt, ctx, conn, now);
-            ovs_mutex_lock(&conn->lock);
-            if (*create_new_conn == false) {
-                handle_ftp_ctl(ct, ctx, pkt, conn, now, CT_FTP_CTL_OTHER,
-                               !!nat_action_info);
-            }
-            ovs_mutex_unlock(&conn->lock);
         }
-        return true;
+        ovs_mutex_unlock(&conn->lock);
     }
-    return false;
+    return true;
 }
+
+/* Distribute a connection state-transition event to registered hooks.
+ * Returns true if a hook handled the update (and set *create_new_conn),
+ * false if the caller should fall through to default conn_update_state(). */
+static bool
+conn_update_state_dist(struct conntrack *ct, struct dp_packet *pkt,
+                       struct conn_lookup_ctx *ctx, struct conn *conn,
+                       const struct nat_action_info_t *nat_action_info,
+                       enum ct_alg_ctl_type ct_alg_ctl, long long now,
+                       bool *create_new_conn)
+{
+    for (size_t i = 0; i < n_ct_update_hooks; i++) {
+        if (ct_update_hooks[i].fn(ct, pkt, ctx, conn, nat_action_info,
+                                  ct_alg_ctl, now, create_new_conn)) {
+            return true;
+        }
+     }
+     return false;
+ }
 
 static void
 set_cached_conn(const struct nat_action_info_t *nat_action_info,
@@ -1450,10 +1477,10 @@ process_one(struct conntrack *ct, struct dp_packet *pkt,
     enum ct_alg_ctl_type ct_alg_ctl = get_alg_ctl_type(pkt, helper);
 
     if (OVS_LIKELY(conn)) {
-        if (OVS_LIKELY(!conn_update_state_alg(ct, pkt, ctx, conn,
-                                              nat_action_info,
-                                              ct_alg_ctl, now,
-                                              &create_new_conn))) {
+        if (OVS_LIKELY(!conn_update_state_dist(ct, pkt, ctx, conn,
+                                               nat_action_info,
+                                               ct_alg_ctl, now,
+                                               &create_new_conn))) {
             create_new_conn = conn_update_state(ct, pkt, ctx, conn, now);
         }
         if (nat_action_info && !create_new_conn) {
@@ -3744,6 +3771,35 @@ static void
 adj_seqnum(ovs_16aligned_be32 *val, int32_t inc)
 {
     put_16aligned_be32(val, htonl(ntohl(get_16aligned_be32(val)) + inc));
+}
+
+void
+conn_update_state_hook_register(int priority, conn_update_state_hook_fn fn)
+{
+    ovs_assert(n_ct_update_hooks < CT_UPDATE_STATE_HOOKS_MAX);
+
+    /* Insert in sorted order (ascending priority = higher precedence). */
+    size_t i = n_ct_update_hooks;
+    while (i > 0 && ct_update_hooks[i - 1].priority > priority) {
+        ct_update_hooks[i] = ct_update_hooks[i - 1];
+        i--;
+    }
+    ct_update_hooks[i].priority = priority;
+    ct_update_hooks[i].fn = fn;
+    n_ct_update_hooks++;
+}
+
+void
+conn_update_state_hook_unregister(conn_update_state_hook_fn fn)
+{
+    for (size_t i = 0; i < n_ct_update_hooks; i++) {
+        if (ct_update_hooks[i].fn == fn) {
+            memmove(&ct_update_hooks[i], &ct_update_hooks[i + 1],
+                    (n_ct_update_hooks - i - 1) * sizeof ct_update_hooks[0]);
+            n_ct_update_hooks--;
+            return;
+        }
+    }
 }
 
 static void
