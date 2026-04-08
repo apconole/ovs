@@ -87,6 +87,8 @@ struct ct_offload_class {
 int  ct_offload_register(const struct ct_offload_class *);
 void ct_offload_unregister(const struct ct_offload_class *);
 
+/* Allocate private slot id. */
+void ct_offload_alloc_private_slot(void);
 /* Module initialization (register built-in providers). */
 void ct_offload_module_init(void);
 
@@ -97,6 +99,12 @@ long long ct_offload_conn_update(const struct ct_offload_ctx *);
 void      ct_offload_conn_established(const struct ct_offload_ctx *);
 bool      ct_offload_can_offload(const struct ct_offload_ctx *);
 void      ct_offload_flush(void);
+
+/* Returns true if 'conn' has been successfully offloaded to hardware.
+ * Set by ct_offload_conn_add(); cleared by ct_offload_conn_del(). */
+bool      ct_offload_conn_is_offloaded(const struct conn *);
+/* Returns true if 'conn' has been transitioned to established state. */
+bool      ct_offload_conn_is_established(const struct conn *);
 
 /* Batch offload API.
  *
