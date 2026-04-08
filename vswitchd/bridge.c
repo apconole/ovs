@@ -28,6 +28,7 @@
 #include "daemon.h"
 #include "dirs.h"
 #include "dpif.h"
+#include "ct-offload.h"
 #include "dpif-offload.h"
 #include "dpdk.h"
 #include "hash.h"
@@ -543,6 +544,8 @@ bridge_init(const char *remote)
 void
 bridge_exit(bool delete_datapath)
 {
+    ct_offload_flush();
+
     if_notifier_manual_set_cb(NULL);
     if_notifier_destroy(ifnotifier);
     seq_destroy(ifaces_changed);
@@ -3396,6 +3399,7 @@ bridge_run(void)
 
     if (cfg && ovsdb_idl_get_seqno(idl) != idl_seqno) {
         dpif_offload_set_global_cfg(cfg);
+        ct_offload_set_global_cfg(cfg);
     }
 
     if (cfg) {
