@@ -252,6 +252,17 @@ struct conntrack {
  *    3. 'resources_lock'
  */
 
+/* ALG control type identifiers.  These determine which application-layer
+ * gateway helper applies to a given connection. */
+enum ct_alg_ctl_type {
+    CT_ALG_CTL_NONE,
+    CT_ALG_CTL_FTP,
+    CT_ALG_CTL_TFTP,
+    /* SIP is not enabled through OpenFlow and is present only as an example
+     * of an ALG that allows a wildcard source IP address. */
+    CT_ALG_CTL_SIP,
+};
+
 extern struct ct_l4_proto ct_proto_tcp;
 extern struct ct_l4_proto ct_proto_other;
 extern struct ct_l4_proto ct_proto_icmp4;
@@ -267,6 +278,50 @@ struct ct_l4_proto {
     void (*conn_get_protoinfo)(const struct conn *,
                                struct ct_dpif_protoinfo *);
 };
+
+/* Transient lookup context built for each packet; private to conntrack.c and
+ * the ALG helper modules. */
+struct conn_lookup_ctx {
+    struct conn_key key;
+    struct conn *conn;
+    uint32_t hash;
+    bool reply;
+    bool icmp_related;
+};
+
+/* conn_update_state_dist() hook
+ *
+ * Modules may register a hook to intercept connection state transitions.
+ * conn_update_state_dist() calls registered hooks in ascending priority order
+ * until one returns true (meaning the hook handled the update, including any
+ * call to conn_update_state() it needed to make).  If no hook claims the
+ * packet the caller falls through to the default conn_update_state() path.
+ *
+ * Priority: lower numerical value -> higher precedence -> called first.
+ * Named constants below cover the common cases; any int value is accepted.
+ *
+ * conn->lock is NOT held on entry; hooks must acquire it as needed following
+ * the lock-ordering rules.
+ *
+ * Registration must happen before any connection is processed (i.e. at module
+ * initialisation time, under ovsthread_once).
+ */
+typedef bool (*conn_update_state_hook_fn)(
+    struct conntrack *ct, struct dp_packet *pkt,
+    struct conn_lookup_ctx *ctx, struct conn *conn,
+    const struct nat_action_info_t *nat_action_info,
+    enum ct_alg_ctl_type ct_alg_ctl, long long now,
+    bool *create_new_conn);
+
+enum conn_update_state_hook_priority {
+    CT_HOOK_PRI_HIGH   =  50,  /* Before built-in ALG handlers. */
+    CT_HOOK_PRI_NORMAL = 100,  /* Default; used by built-in ALG handlers. */
+    CT_HOOK_PRI_LOW    = 150,  /* After built-in ALG handlers. */
+};
+
+void conn_update_state_hook_register(int priority,
+                                     conn_update_state_hook_fn);
+void conn_update_state_hook_unregister(conn_update_state_hook_fn);
 
 /* conn_private_get() / conn_private_set()
  *
