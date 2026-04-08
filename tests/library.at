@@ -307,3 +307,21 @@ AT_CLEANUP
 AT_SETUP([Conntrack Library - FTP ALG parsing])
 AT_CHECK([ovstest test-conntrack ftp-alg-large-payload])
 AT_CLEANUP
+
+AT_SETUP([conntrack private storage - id alloc])
+AT_KEYWORDS([conntrack])
+AT_CHECK([ovstest test-conntrack private-id-alloc], [0], [.
+])
+AT_CLEANUP
+
+AT_SETUP([conntrack private storage - slot exhaustion])
+AT_KEYWORDS([conntrack])
+AT_CHECK([ovstest test-conntrack private-id-exhaustion], [0], [.........
+], [ignore])
+AT_CLEANUP
+
+AT_SETUP([conntrack private storage - destructor])
+AT_KEYWORDS([conntrack])
+AT_CHECK([ovstest test-conntrack private-destructor], [0], [.
+])
+AT_CLEANUP

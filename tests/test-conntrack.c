@@ -16,6 +16,7 @@
 
 #include <config.h>
 #include "conntrack.h"
+#include "conntrack-private.h"
 
 #include "dp-packet.h"
 #include "fatal-signal.h"
@@ -492,7 +493,7 @@ test_pcap(struct ovs_cmdl_context *ctx)
     ovs_pcap_close(pcap);
 }
 
-/* ALG related testing. */
+/* Conntrack functional testing. */
 
 /* FTP IPv4 PORT payload for testing. */
 #define FTP_PORT_CMD_STR  "PORT 192,168,123,2,113,42\r\n"
@@ -572,6 +573,124 @@ test_ftp_alg_large_payload(struct ovs_cmdl_context *ctx OVS_UNUSED)
     conntrack_destroy(ct);
 }
 
+/* Verify that conn_private_id_alloc() returns a valid slot ID and that the
+ * idiomatic "store the ID in a static variable at module init" pattern works.
+ */
+static void
+test_private_id_alloc(struct ovs_cmdl_context *ctx OVS_UNUSED)
+{
+    /* Mirrors the real-world pattern: a module stores its slot ID in a static
+     * so it is initialised once and available everywhere in the translation
+     * unit. */
+    static ct_private_id_t my_id = CT_PRIVATE_ID_INVALID;
+
+    my_id = conn_private_id_alloc(NULL);
+
+    ovs_assert(my_id != CT_PRIVATE_ID_INVALID);
+
+    ovs_assert(my_id < CT_CONN_PRIVATE_MAX);
+
+    /* The first allocation must yield slot 0. */
+    ovs_assert(my_id == 0);
+    printf(".\n");
+}
+
+/* Allocate every available slot and confirm that the next request returns
+ * CT_PRIVATE_ID_INVALID.  Each successful allocation prints one dot so the
+ * .at test can verify both the count and the error behaviour.
+ */
+static void
+test_private_id_exhaustion(struct ovs_cmdl_context *ctx OVS_UNUSED)
+{
+    ct_private_id_t ids[CT_CONN_PRIVATE_MAX];
+
+    /* Fill all CT_CONN_PRIVATE_MAX slots. */
+    for (unsigned int i = 0; i < CT_CONN_PRIVATE_MAX; i++) {
+        ids[i] = conn_private_id_alloc(NULL);
+        ovs_assert(ids[i] != CT_PRIVATE_ID_INVALID);
+
+        ovs_assert(ids[i] == i);
+        printf(".");
+    }
+
+    /* The very next allocation must fail. */
+    ct_private_id_t extra = conn_private_id_alloc(NULL);
+    ovs_assert(extra == CT_PRIVATE_ID_INVALID);
+    printf(".\n");
+}
+
+/* Globals written by the destructor callback used in test 3. */
+static int   dtor_call_count = 0;
+static void *dtor_last_ptr   = NULL;
+
+static void
+record_destructor(void *data)
+{
+    dtor_call_count++;
+    dtor_last_ptr = data;
+}
+
+/* Register a destructor, commit a real connection, attach a sentinel pointer
+ * as private data, then destroy the conntrack instance.  After draining the
+ * RCU queue (ovsrcu_exit) the destructor must have been called exactly
+ * once with the sentinel value.
+ */
+static uintptr_t ERRPTR;
+
+static void
+test_private_destructor(struct ovs_cmdl_context *ctx OVS_UNUSED)
+{
+    /* Sentinel: a non-NULL pointer value we can identify unambiguously.
+     * ERRPTR is defined above in case we want to use it in the future as
+     * a platform-agnostic and portable sentinel value rather than some
+     * hardcoded hex. */
+    void *sentinel = (void *)(uintptr_t)&ERRPTR;
+
+    static ct_private_id_t dtor_id = CT_PRIVATE_ID_INVALID;
+    dtor_id = conn_private_id_alloc(record_destructor);
+    ovs_assert(dtor_id != CT_PRIVATE_ID_INVALID);
+
+    /* Create a conntrack instance and commit one UDP connection. */
+    struct conntrack *lct = conntrack_init();
+    ovs_be16 dl_type;
+    struct dp_packet *pkt = build_packet(1, 2, &dl_type);
+    struct dp_packet_batch batch;
+    dp_packet_batch_init(&batch);
+    dp_packet_batch_add(&batch, pkt);
+
+    long long now = time_msec();
+    conntrack_execute(lct, &batch, dl_type, false, true, 0,
+                      NULL, NULL, NULL, NULL, now, 0);
+
+    /* After a committed execute the packet carries a cached conn pointer. */
+    struct conn *conn = pkt->md.conn;
+    ovs_assert(conn != NULL);
+
+    /* Attach the sentinel as private data for our slot. */
+    ovs_mutex_lock(&conn->lock);
+    conn_private_set(conn, dtor_id, sentinel);
+    ovs_mutex_unlock(&conn->lock);
+
+    /* Destroying the tracker flushes all connections, queuing delete_conn()
+     * callbacks via ovsrcu_postpone().  The destructor fires once those
+     * callbacks are processed. */
+    conntrack_destroy(lct);
+
+    /* ovsrcu_exit() stops the urcu background thread and synchronously drains
+     * all pending postponed callbacks (including delete_conn__ / destructor
+     * chain) before returning.  ovsrcu_synchronize() is insufficient here: it
+     * only waits for threads to quiesce, not for the urcu thread to have
+     * actually executed the queued callbacks. */
+    ovsrcu_exit();
+
+    ovs_assert(dtor_call_count == 1);
+
+    ovs_assert(dtor_last_ptr == sentinel);
+
+    dp_packet_delete_batch(&batch, true);
+    printf(".\n");
+}
+
 
 static const struct ovs_cmdl_command commands[] = {
     /* Connection tracker tests. */
@@ -597,6 +716,15 @@ static const struct ovs_cmdl_command commands[] = {
      * is rewritten to the SNAT target rather than causing a crash. */
     {"ftp-alg-large-payload", "", 0, 0,
         test_ftp_alg_large_payload, OVS_RO},
+    /* Private per-connection storage registry tests.
+     * Each MUST be run as a separate ovstest invocation so the process-global
+     * slot counter is fresh (starts at 0). */
+    {"private-id-alloc", "", 0, 0,
+     test_private_id_alloc, OVS_RO},
+    {"private-id-exhaustion", "", 0, 0,
+     test_private_id_exhaustion, OVS_RO},
+    {"private-destructor", "", 0, 0,
+     test_private_destructor, OVS_RO},
 
     {NULL, NULL, 0, 0, NULL, OVS_RO},
 };

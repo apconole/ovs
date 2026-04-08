@@ -156,6 +156,10 @@ struct conn {
     bool alg_related; /* True if alg data connection. */
 
     uint32_t tp_id; /* Timeout policy ID. */
+
+    /* Private per-module storage.  Indexed by ct_private_id_t values obtained
+     * via conn_private_id_alloc().  Access is protected by conn->lock. */
+    void *private[CT_CONN_PRIVATE_MAX];
 };
 
 enum ct_update_res {
@@ -263,5 +267,27 @@ struct ct_l4_proto {
     void (*conn_get_protoinfo)(const struct conn *,
                                struct ct_dpif_protoinfo *);
 };
+
+/* conn_private_get() / conn_private_set()
+ *
+ * Fast-path accessors for per-connection private storage slots.  Both
+ * functions are static inlines so they compile to a single load/store with
+ * bounds-checking asserts that disappear in release builds.
+ *
+ * The caller must hold conn->lock when accessing the pointer.
+ */
+static inline void *
+conn_private_get(const struct conn *conn, ct_private_id_t id)
+{
+    ovs_assert(id < CT_CONN_PRIVATE_MAX);
+    return conn->private[id];
+}
+
+static inline void
+conn_private_set(struct conn *conn, ct_private_id_t id, void *data)
+{
+    ovs_assert(id < CT_CONN_PRIVATE_MAX);
+    conn->private[id] = data;
+}
 
 #endif /* conntrack-private.h */
