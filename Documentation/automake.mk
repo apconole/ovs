@@ -59,6 +59,7 @@ DOC_SOURCE = \
 	Documentation/topics/tracing.rst \
 	Documentation/topics/usdt-probes.rst \
 	Documentation/topics/userspace-checksum-offloading.rst \
+	Documentation/topics/userspace-conntrack-offloading.rst \
 	Documentation/topics/userspace-tso.rst \
 	Documentation/topics/userspace-tx-steering.rst \
 	Documentation/topics/windows.rst \
