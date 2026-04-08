@@ -17,6 +17,8 @@
 #include <config.h>
 #include "conntrack.h"
 #include "conntrack-private.h"
+#include "ct-offload.h"
+#include "ct-offload-dummy.h"
 
 #include "dp-packet.h"
 #include "fatal-signal.h"
@@ -692,6 +694,304 @@ test_private_destructor(struct ovs_cmdl_context *ctx OVS_UNUSED)
 }
 
 
+/* ===========================================================================
+ * CT offload dummy provider tests
+ *
+ * These tests exercise the ct_offload provider API directly without going
+ * through conntrack_execute.  The offload global-enable flag is deliberately
+ * not set here: the unit tests own the provider list and call the API
+ * functions directly.  End-to-end enablement (hw-offload=true via DB config)
+ * is covered by the dpif-netdev integration test.
+ *
+ * Each test must be run as a separate ovstest invocation so that the
+ * process-global provider list starts empty.
+ * ===========================================================================
+ */
+
+/* The dummy only compares pointer addresses and never dereferences them, so a
+ * small integer cast is sufficient. */
+#define FAKE_CONN(n)   ((struct conn *)(uintptr_t)(n))
+#define FAKE_NETDEV(n) ((struct netdev *)(uintptr_t)(n))
+
+/* Test: offload-conn-add
+ * ----------------------
+ * Register the dummy provider, call ct_offload_conn_add() directly, and
+ * verify that the conn_add hook was invoked and the connection is tracked.
+ */
+static void
+test_offload_conn_add(struct ovs_cmdl_context *ctx OVS_UNUSED)
+{
+    ct_offload_force_enable(true);
+    ct_offload_dummy_register();
+
+    struct conn *fake = FAKE_CONN(1);
+    struct ct_offload_ctx offload_ctx = {
+        .conn = fake, .netdev_in = NULL,
+    };
+    ct_offload_conn_add(&offload_ctx);
+
+    ovs_assert(ct_offload_dummy_n_added() == 1);
+    ovs_assert(ct_offload_dummy_contains(fake));
+
+    ct_offload_dummy_unregister();
+    ct_offload_force_enable(false);
+    printf(".\n");
+}
+
+/* Test: offload-conn-del
+ * ----------------------
+ * Register the dummy, add then delete a connection via the API, and verify
+ * that conn_del was called and the connection is no longer tracked.
+ */
+static void
+test_offload_conn_del(struct ovs_cmdl_context *ctx OVS_UNUSED)
+{
+    ct_offload_force_enable(true);
+    ct_offload_dummy_register();
+
+    struct conn *fake = FAKE_CONN(1);
+    struct ct_offload_ctx offload_ctx = {
+        .conn = fake, .netdev_in = NULL,
+    };
+
+    ct_offload_conn_add(&offload_ctx);
+    ovs_assert(ct_offload_dummy_n_added() == 1);
+
+    ct_offload_conn_del(&offload_ctx);
+    ovs_assert(ct_offload_dummy_n_deleted() == 1);
+    ovs_assert(!ct_offload_dummy_contains(fake));
+
+    ct_offload_dummy_unregister();
+    ct_offload_force_enable(false);
+    printf(".\n");
+}
+
+/* Test: offload-conn-update
+ * -------------------------
+ * Register the dummy, add a connection, call ct_offload_conn_update()
+ * directly, and verify that a non-zero last-used timestamp is returned.
+ */
+static void
+test_offload_conn_update(struct ovs_cmdl_context *ctx OVS_UNUSED)
+{
+    ct_offload_force_enable(true);
+    ct_offload_dummy_register();
+
+    struct conn *fake = FAKE_CONN(1);
+    struct ct_offload_ctx offload_ctx = {
+        .conn = fake, .netdev_in = NULL,
+    };
+
+    ct_offload_conn_add(&offload_ctx);
+
+    long long ts = ct_offload_conn_update(&offload_ctx);
+    ovs_assert(ts != 0);
+    ovs_assert(ct_offload_dummy_n_updated() == 1);
+
+    ct_offload_dummy_unregister();
+    ct_offload_force_enable(false);
+    printf(".\n");
+}
+
+/* Test: offload-multi-conn
+ * ------------------------
+ * Register the dummy, add N connections via the API, and verify that each
+ * is tracked independently.
+ */
+#define OFFLOAD_MULTI_N 4
+
+static void
+test_offload_multi_conn(struct ovs_cmdl_context *ctx OVS_UNUSED)
+{
+    ct_offload_force_enable(true);
+    ct_offload_dummy_register();
+
+    for (unsigned i = 1; i <= OFFLOAD_MULTI_N; i++) {
+        struct ct_offload_ctx offload_ctx = {
+            .conn = FAKE_CONN(i), .netdev_in = NULL,
+        };
+        ct_offload_conn_add(&offload_ctx);
+    }
+
+    ovs_assert(ct_offload_dummy_n_added() == OFFLOAD_MULTI_N);
+    for (unsigned i = 1; i <= OFFLOAD_MULTI_N; i++) {
+        ovs_assert(ct_offload_dummy_contains(FAKE_CONN(i)));
+    }
+
+    ct_offload_dummy_unregister();
+    ct_offload_force_enable(false);
+    printf(".\n");
+}
+
+/* Test: offload-conn-established
+ * --------------------------------
+ * Drive a TCP three-way handshake through conntrack_execute() with the dummy
+ * offload provider registered.  Verifies three properties:
+ *
+ *  (a) conn_add fires on the SYN (new connection created, forward netdev
+ *      recorded); conn_established does NOT fire yet.
+ *  (b) conn_established fires exactly once on the first ESTABLISHED reply
+ *      (SYN-ACK), recording the reply-direction netdev so that the dummy
+ *      entry is fully bidirectional.
+ *  (c) A subsequent reply packet (ACK) does NOT cause a second
+ *      conn_established call the "exactly once" guarantee holds.
+ *
+ * ct_offload_dummy_register() calls ct_offload_force_enable(true), which
+ * makes ct_offload_enabled() return true so the guards in conntrack.c fire
+ * without a real hardware offload backend.
+ */
+static void
+test_offload_conn_established(struct ovs_cmdl_context *ctx OVS_UNUSED)
+{
+    /* Allocate the per-connection private slot before registering so that the
+     * ADD/ESTABLISHED state transitions are tracked in conn->private[].
+     * The simple FAKE_CONN tests skip this step because they do not exercise
+     * the private-slot code path. */
+    ct_offload_alloc_private_slot();
+    ct_offload_force_enable(true);
+    ct_offload_dummy_register();
+
+    struct conntrack *lct = conntrack_init();
+    /* Disable TCP sequence-number checking so test packets with seq=0 are
+     * accepted by the state machine. */
+    conntrack_set_tcp_seq_chk(lct, false);
+
+    long long now = time_msec();
+
+    struct eth_addr eth_a = ETH_ADDR_C(00, 00, 00, 00, 00, 01);
+    struct eth_addr eth_b = ETH_ADDR_C(00, 00, 00, 00, 00, 02);
+    ovs_be32 ip_a = inet_addr("10.0.0.1");
+    ovs_be32 ip_b = inet_addr("10.0.0.2");
+    uint16_t sport = 1234;
+    uint16_t dport = 80;
+
+    /* --- (a) SYN: forward direction, creates the connection entry. --- */
+    struct dp_packet *syn = build_eth_ip_packet(NULL, eth_a, eth_b,
+                                                ip_a, ip_b,
+                                                IPPROTO_TCP, 0);
+    build_tcp_packet(syn, sport, dport, TCP_SYN, NULL, 0);
+
+    struct dp_packet_batch syn_batch;
+    dp_packet_batch_init_packet(&syn_batch, syn);
+    conntrack_execute(lct, &syn_batch, htons(ETH_TYPE_IP), false, true, 0,
+                      NULL, NULL, NULL, NULL, now, 0, FAKE_NETDEV(1));
+
+    /* conn_add must have fired; conn_established must not have. */
+    ovs_assert(ct_offload_dummy_n_added() == 1);
+    ovs_assert(ct_offload_dummy_n_established() == 0);
+
+    /* The packet carries the conn pointer after commit. */
+    struct conn *conn = syn->md.conn;
+    ovs_assert(conn != NULL);
+    ovs_assert(ct_offload_conn_is_offloaded(conn));
+    ovs_assert(!ct_offload_conn_is_established(conn));
+
+    dp_packet_delete_batch(&syn_batch, true);
+
+    /* --- (b) SYN-ACK: reply direction, transitions to ESTABLISHED. --- */
+    struct dp_packet *synack = build_eth_ip_packet(NULL, eth_b, eth_a,
+                                                   ip_b, ip_a,
+                                                   IPPROTO_TCP, 0);
+    build_tcp_packet(synack, dport, sport, TCP_SYN | TCP_ACK, NULL, 0);
+
+    struct dp_packet_batch synack_batch;
+    dp_packet_batch_init_packet(&synack_batch, synack);
+    conntrack_execute(lct, &synack_batch, htons(ETH_TYPE_IP), false, true, 0,
+                      NULL, NULL, NULL, NULL, now, 0, FAKE_NETDEV(2));
+
+    /* conn_established fires exactly once on the first ESTABLISHED reply. */
+    ovs_assert(ct_offload_dummy_n_established() == 1);
+    ovs_assert(ct_offload_conn_is_established(conn));
+    /* Both netdev pointers are now known: the entry is fully bidirectional. */
+    ovs_assert(ct_offload_dummy_is_bidirectional(conn));
+
+    dp_packet_delete_batch(&synack_batch, true);
+
+    /* --- (c) ACK: another reply packet must NOT trigger conn_established
+     *             again.  The private-slot guard enforces this. --- */
+    struct dp_packet *ack = build_eth_ip_packet(NULL, eth_b, eth_a,
+                                                ip_b, ip_a,
+                                                IPPROTO_TCP, 0);
+    build_tcp_packet(ack, dport, sport, TCP_ACK, NULL, 0);
+
+    struct dp_packet_batch ack_batch;
+    dp_packet_batch_init_packet(&ack_batch, ack);
+    conntrack_execute(lct, &ack_batch, htons(ETH_TYPE_IP), false, true, 0,
+                      NULL, NULL, NULL, NULL, now, 0, FAKE_NETDEV(2));
+
+    /* Counter must still be 1 - conn_established must not have fired again. */
+    ovs_assert(ct_offload_dummy_n_established() == 1);
+
+    dp_packet_delete_batch(&ack_batch, true);
+
+    conntrack_destroy(lct);
+    ct_offload_dummy_unregister();
+    ct_offload_force_enable(false);
+    printf(".\n");
+}
+
+/* Test: offload-conn-established-api
+ * ------------------------------------
+ * Exercise ct_offload_conn_established() directly (not through
+ * conntrack_execute) to verify that the "exactly once" guarantee in the
+ * dispatch layer holds independently of the conntrack state machine.
+ *
+ * Sequence:
+ *   1. conn_add() - transitions the private slot to CT_OFFLOAD_STATE_ADDED.
+ *   2. conn_established() - should dispatch to the provider exactly once and
+ *      advance the slot to CT_OFFLOAD_STATE_EST.
+ *   3. A second conn_established() call with the same conn must be a no-op
+ *      (provider not called again, counter unchanged).
+ */
+static void
+test_offload_conn_established_api(struct ovs_cmdl_context *ctx OVS_UNUSED)
+{
+    ct_offload_alloc_private_slot();
+    ct_offload_force_enable(true);
+    ct_offload_dummy_register();
+
+    /* We need a real conn with a live private-data slot, so spin up a minimal
+     * conntrack instance and commit one UDP packet to get a conn. */
+    struct conntrack *lct = conntrack_init();
+    long long now = time_msec();
+
+    ovs_be16 dl_type;
+    struct dp_packet *pkt = build_packet(1, 2, &dl_type);
+    struct dp_packet_batch batch;
+    dp_packet_batch_init_packet(&batch, pkt);
+    conntrack_execute(lct, &batch, dl_type, false, true, 0,
+                      NULL, NULL, NULL, NULL, now, 0, FAKE_NETDEV(1));
+    struct conn *conn = pkt->md.conn;
+    ovs_assert(conn != NULL);
+    dp_packet_delete_batch(&batch, true);
+
+    /* conn_add should have fired (via conntrack_execute). */
+    ovs_assert(ct_offload_dummy_n_added() == 1);
+    ovs_assert(ct_offload_dummy_n_established() == 0);
+    ovs_assert(ct_offload_conn_is_offloaded(conn));
+    ovs_assert(!ct_offload_conn_is_established(conn));
+
+    /* First call: must dispatch to the provider. */
+    struct ct_offload_ctx ctx1 = {
+        .conn = conn, .netdev_in = FAKE_NETDEV(2),
+    };
+    ct_offload_conn_established(&ctx1);
+    ovs_assert(ct_offload_dummy_n_established() == 1);
+    ovs_assert(ct_offload_conn_is_established(conn));
+    ovs_assert(ct_offload_dummy_is_bidirectional(conn));
+
+    /* Second call with the same conn: must be a no-op. */
+    ct_offload_conn_established(&ctx1);
+
+    ovs_assert(ct_offload_dummy_n_established() == 1);  /* unchanged */
+
+    conntrack_destroy(lct);
+    ct_offload_dummy_unregister();
+    ct_offload_force_enable(false);
+    printf(".\n");
+}
+
+
 static const struct ovs_cmdl_command commands[] = {
     /* Connection tracker tests. */
     /* Starts 'n_threads' threads. Each thread will send 'n_pkts' packets to
@@ -725,6 +1025,20 @@ static const struct ovs_cmdl_command commands[] = {
      test_private_id_exhaustion, OVS_RO},
     {"private-destructor", "", 0, 0,
      test_private_destructor, OVS_RO},
+    /* CT offload dummy provider tests.
+     * Each must be run as a separate ovstest invocation. */
+    {"offload-conn-add", "", 0, 0,
+     test_offload_conn_add, OVS_RO},
+    {"offload-conn-del", "", 0, 0,
+     test_offload_conn_del, OVS_RO},
+    {"offload-conn-update", "", 0, 0,
+     test_offload_conn_update, OVS_RO},
+    {"offload-multi-conn", "", 0, 0,
+     test_offload_multi_conn, OVS_RO},
+    {"offload-conn-established", "", 0, 0,
+     test_offload_conn_established, OVS_RO},
+    {"offload-conn-established-api", "", 0, 0,
+     test_offload_conn_established_api, OVS_RO},
 
     {NULL, NULL, 0, 0, NULL, OVS_RO},
 };

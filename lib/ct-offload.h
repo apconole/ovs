@@ -83,6 +83,12 @@ struct ct_offload_class {
     void (*flush)(void);
 };
 
+/* Dummy (software-only) CT offload provider, always compiled in.
+ * Registered automatically when the "dummy" dpif offload class is active
+ * (e.g. hw-offload=true with a dummy datapath), and available directly for
+ * unit tests via ct_offload_dummy_register() in ct-offload-dummy.h. */
+extern const struct ct_offload_class ct_offload_dummy_class;
+
 /* Register/unregister a provider.  Must be called at module init, before
  * any connections are created. */
 int  ct_offload_register(const struct ct_offload_class *);
@@ -99,6 +105,10 @@ void ct_offload_set_global_cfg(const struct ovsrec_open_vswitch *);
 /* Returns true when CT offload is enabled (delegates to dpif_offload_enabled).
  */
 bool ct_offload_enabled(void);
+
+/* Used for testing.  Forces an additional parameter for the offload enable
+ * check.  Set to 'true' to always enable the offloads. */
+void ct_offload_force_enable(bool);
 
 /* Per-connection offload API that dispatches to all registered providers. */
 int       ct_offload_conn_add(const struct ct_offload_ctx *);

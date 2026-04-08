@@ -57,6 +57,10 @@ static struct ovs_list  ct_offload_classes
  * registered dpif offload class will be activated by ct_offload_module_init().
  */
 static const struct ct_offload_class *base_ct_offload_classes[] = {
+    /* Dummy provider: activated whenever the "dummy" dpif offload class is
+     * registered (hw-offload=true with a dummy datapath).  Also used directly
+     * by unit tests via ct_offload_dummy_register(). */
+    &ct_offload_dummy_class,
 };
 
 
@@ -166,6 +170,12 @@ ct_offload_module_init(void)
     }
 }
 
+static bool ct_offload_forced = false;
+void ct_offload_force_enable(bool value)
+{
+    ct_offload_forced = value;
+}
+
 /* ct_offload_enabled() - returns true when hardware offload is active.
  *
  * Delegates to dpif_offload_enabled() so CT offload shares the same global
@@ -173,7 +183,7 @@ ct_offload_module_init(void)
 bool
 ct_offload_enabled(void)
 {
-    return dpif_offload_enabled();
+    return dpif_offload_enabled() || ct_offload_forced;
 }
 
 /* ct_offload_set_global_cfg() - configure CT offload from OVSDB.
