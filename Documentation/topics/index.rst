@@ -56,6 +56,7 @@ OVS
    idl-compound-indexes
    ovs-extensions
    userspace-checksum-offloading
+   userspace-conntrack-offloading
    userspace-tx-steering
    usdt-probes
    flow-visualization
