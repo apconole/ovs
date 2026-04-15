@@ -71,6 +71,7 @@ DISTCLEANFILES =
 PYCOV_CLEAN_FILES = build-aux/check-structs,cover
 
 EXTRA_DIST = \
+	AGENTS.md \
 	AUTHORS.rst \
 	CONTRIBUTING.rst \
 	LICENSE \
