@@ -13651,3 +13651,85 @@ AT_CHECK([ovs-appctl coverage/read-counter revalidate_missing_dp_flow], [0],
 
 OVS_VSWITCHD_STOP(["/failed to flow_del (No such file or directory)/d"])
 AT_CLEANUP
+
+AT_SETUP([ofproto-dpif - bundle floodable flag after STP disabled])
+AT_KEYWORDS([stp bundle floodable])
+OVS_VSWITCHD_START
+
+dnl Setup STP
+AT_CHECK([ovs-vsctl set bridge br0 stp_enable=true])
+
+dnl Add ports for forwarding.
+AT_CHECK([ovs-vsctl add-port br0 p1 -- set interface p1 type=dummy])
+AT_CHECK([ovs-vsctl add-port br0 p2 -- set interface p2 type=dummy])
+
+dnl Ensure normal mode.
+AT_CHECK([ovs-ofctl del-flows br0], [0], [ignore])
+AT_CHECK([ovs-ofctl add-flow br0 action=NORMAL], [0], [ignore])
+
+dnl Verify bundle is non-floodable.
+AT_CHECK([ovs-appctl dpif/show | grep -A5 br0], [0], [ignore])
+
+dnl Esnure STP reached forwarding state.
+OVS_WAIT_UNTIL([ovs-appctl stp/show br0 | grep "p1.*forwarding"])
+
+dnl Capture port details in case.
+AT_CHECK([ovs-ofctl dump-ports-desc br0], [0], [ignore])
+
+dnl Now disable STP.
+AT_CHECK([ovs-vsctl set bridge br0 stp_enable=false])
+OVS_WAIT_UNTIL([ovs-vsctl get bridge br0 stp_enable | grep false])
+
+dnl Test flood behavior
+dnl Send a broadcast packet on p2, verify it floods to p1
+AT_CHECK([ovs-appctl ofproto/trace br0 dnl
+          'in_port=p2,eth_src=00:00:00:00:00:01,eth_dst=ff:ff:ff:ff:ff:ff' dnl
+          -generate],
+         [0], [stdout])
+
+dnl Check that output includes p1 (proves it's floodable)
+AT_CHECK([grep 'Datapath actions: 100,1' stdout], [0], [ignore])
+
+OVS_VSWITCHD_STOP
+AT_CLEANUP
+
+AT_SETUP([ofproto-dpif - bundle floodable flag after RSTP disabled])
+AT_KEYWORDS([rstp bundle floodable])
+OVS_VSWITCHD_START
+
+dnl Setup RSTP
+AT_CHECK([ovs-vsctl set bridge br0 rstp_enable=true])
+
+dnl Add ports for forwarding.
+AT_CHECK([ovs-vsctl add-port br0 p1 -- set interface p1 type=dummy])
+AT_CHECK([ovs-vsctl add-port br0 p2 -- set interface p2 type=dummy])
+
+dnl Ensure normal mode.
+AT_CHECK([ovs-ofctl del-flows br0], [0], [ignore])
+AT_CHECK([ovs-ofctl add-flow br0 action=NORMAL], [0], [ignore])
+
+dnl Verify bundle is non-floodable.
+AT_CHECK([ovs-appctl dpif/show | grep -A5 br0], [0], [ignore])
+
+dnl Esnure STP reached forwarding state.
+OVS_WAIT_UNTIL([ovs-appctl rstp/show br0 | grep "p1.*Designated"])
+
+dnl Capture port details in case.
+AT_CHECK([ovs-ofctl dump-ports-desc br0], [0], [ignore])
+
+dnl Now disable RSTP.
+AT_CHECK([ovs-vsctl set bridge br0 rstp_enable=false])
+OVS_WAIT_UNTIL([ovs-vsctl get bridge br0 rstp_enable | grep false])
+
+dnl Test flood behavior.
+dnl Send a broadcast packet on p2, verify it floods to br0,p1
+AT_CHECK([ovs-appctl ofproto/trace br0 dnl
+          'in_port=p2,eth_src=00:00:00:00:00:01,eth_dst=ff:ff:ff:ff:ff:ff' dnl
+          -generate],
+         [0], [stdout])
+
+dnl Check that output includes p1 (proves it's floodable)
+AT_CHECK([grep 'Datapath actions: 100,1' stdout], [0], [ignore])
+
+OVS_VSWITCHD_STOP
+AT_CLEANUP
