@@ -20,17 +20,40 @@
 #include "conntrack.h"
 #include "conntrack-private.h"
 #include "openvswitch/types.h"
+#include "util.h"
 
 struct netdev;
 
 /* Context for offload as part of the callbacks that all connection
- * offload APIs receive.
- */
+ * offload APIs receive. */
 struct ct_offload_ctx {
     struct conn *conn;              /* Connection object being offloaded. */
     struct netdev *netdev_in;       /* Input netdev (NULL at conn_del/update). */
     odp_port_t input_port_id;       /* ODP port number. */
     const struct conn_key *key;     /* Forward-direction 5-tuple.  Always set. */
+};
+
+enum ct_offload_op_type {
+    CT_OFFLOAD_OP_ADD,              /* Add operation. */
+    CT_OFFLOAD_OP_DEL,              /* Del operation. */
+    CT_OFFLOAD_OP_UPD,              /* Update operation. */
+    CT_OFFLOAD_OP_POLICY,           /* Policy check operation. */
+    CT_OFFLOAD_OP_FLUSH,            /* Flush. */
+    CT_OFFLOAD_OP_EST,              /* Established - notify that a connection
+                                     * has a reply seen. */
+};
+
+struct ct_offload_op {
+    enum ct_offload_op_type type;
+    struct ct_offload_ctx   ctx;
+    int                     error;
+};
+
+/* Batched set of offload contexts and operations. */
+struct ct_offload_op_batch {
+    struct ct_offload_op *ops;
+    size_t                n_ops;
+    size_t                allocated;
 };
 
 /* CT offload class describes a conntrack offload provider implementation. */
@@ -39,6 +62,11 @@ struct ct_offload_class {
 
     /* Optional initialization routine for the provider. */
     int (*init)(void);
+
+    /* Interface to allow offload providers to operate in bulk.  If a provider
+     * does not implement this, the fallback is to dispatch each operation
+     * individually. */
+    void (*batch_submit)(struct ct_offload_op_batch *);
 
     /* Per-connection operation callbacks get called for individual operations
      * on the fast path or when batching is not in use.
@@ -77,5 +105,69 @@ long long ct_offload_conn_update(const struct ct_offload_ctx *);
 void      ct_offload_conn_established(const struct ct_offload_ctx *);
 bool      ct_offload_can_offload(const struct ct_offload_ctx *);
 void      ct_offload_flush(void);
+
+/* Batch offload API.
+ *
+ * The default implementation dispatches each operation individually using the
+ * per-connection API above.  Providers that can handle a native batch may do
+ * so by implementing a batch_submit callback in struct ct_offload_class.
+ *
+ * Typical usage:
+ *
+ *   struct ct_offload_op_batch batch;
+ *   ct_offload_op_batch_init(&batch);
+ *
+ *   ct_offload_op_batch_add(&batch, CT_OFFLOAD_OP_ADD, &ctx_a);
+ *   ct_offload_op_batch_add(&batch, CT_OFFLOAD_OP_ADD, &ctx_b);
+ *
+ *   ct_offload_op_batch_submit(&batch);
+ *   for_each_op inspect batch.ops[i].error
+ *
+ *   ct_offload_op_batch_destroy(&batch);
+ *
+ * For CT_OFFLOAD_OP_UPD, op->error is set to 0 when the hardware returned a
+ * valid last-used timestamp (expiration was refreshed by the provider), or to
+ * EIO when no hardware record was found.
+ *
+ * For CT_OFFLOAD_OP_POLICY, op->error is set to 0 when the connection is
+ * eligible for offload, or EPERM when no provider will accept it.
+ */
+static inline void
+ct_offload_op_batch_init(struct ct_offload_op_batch *batch)
+{
+    batch->ops       = NULL;
+    batch->n_ops     = 0;
+    batch->allocated = 0;
+}
+
+static inline void
+ct_offload_op_batch_destroy(struct ct_offload_op_batch *batch)
+{
+    free(batch->ops);
+    batch->ops       = NULL;
+    batch->n_ops     = 0;
+    batch->allocated = 0;
+}
+
+void ct_offload_op_batch_add(struct ct_offload_op_batch *,
+                             enum ct_offload_op_type,
+                             const struct ct_offload_ctx *);
+void ct_offload_op_batch_submit(struct ct_offload_op_batch *);
+
+static inline size_t
+ct_offload_op_batch_len(struct ct_offload_op_batch *batch)
+{
+    return batch->n_ops;
+}
+
+static inline size_t
+ct_offload_op_batch_size(struct ct_offload_op_batch *batch)
+{
+    return batch->allocated;
+}
+
+#define CT_OFFLOAD_BATCH_OP_FOR_EACH(IDX, OP, BATCH) \
+    for (size_t IDX = 0; IDX < ct_offload_op_batch_len(BATCH); IDX++) \
+        if (OP = &((BATCH)->ops[IDX]), true)
 
 #endif /* CT_OFFLOAD_H */

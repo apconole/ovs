@@ -34,12 +34,12 @@ struct ct_offload_class_node {
     struct ovs_list               list_node;
 };
 
-/* Global list of registered CT offload classes and a rwlock to protect it.
- * Write lock is held only during register/unregister; fast-path operations
- * hold the read lock so multiple PMD threads can iterate concurrently. */
-static struct ovs_rwlock ct_offload_rwlock = OVS_RWLOCK_INITIALIZER;
+/* Global list of registered CT offload classes.  Write lock is held only
+ * during register/unregister; fast-path operations hold the read lock so
+ * multiple PMD threads can iterate concurrently. */
+static struct ovs_rwlock ct_offload_classes_rwlock = OVS_RWLOCK_INITIALIZER;
 static struct ovs_list   ct_offload_classes
-    OVS_GUARDED_BY(ct_offload_rwlock)
+    OVS_GUARDED_BY(ct_offload_classes_rwlock)
     = OVS_LIST_INITIALIZER(&ct_offload_classes);
 
 
@@ -60,7 +60,7 @@ ct_offload_register(const struct ct_offload_class *class)
     ovs_assert(class->conn_del);
     ovs_assert(class->can_offload);
 
-    ovs_rwlock_wrlock(&ct_offload_rwlock);
+    ovs_rwlock_wrlock(&ct_offload_classes_rwlock);
 
     /* Detect duplicate registrations. */
     LIST_FOR_EACH (node, list_node, &ct_offload_classes) {
@@ -85,7 +85,7 @@ ct_offload_register(const struct ct_offload_class *class)
     VLOG_DBG("registered ct offload class: %s", class->name);
 
 out:
-    ovs_rwlock_unlock(&ct_offload_rwlock);
+    ovs_rwlock_unlock(&ct_offload_classes_rwlock);
     return error;
 }
 
@@ -100,7 +100,7 @@ ct_offload_unregister(const struct ct_offload_class *class)
 
     ovs_assert(class);
 
-    ovs_rwlock_wrlock(&ct_offload_rwlock);
+    ovs_rwlock_wrlock(&ct_offload_classes_rwlock);
     LIST_FOR_EACH (node, list_node, &ct_offload_classes) {
         if (node->class == class) {
             ovs_list_remove(&node->list_node);
@@ -113,7 +113,7 @@ ct_offload_unregister(const struct ct_offload_class *class)
               class->name);
 
 out:
-    ovs_rwlock_unlock(&ct_offload_rwlock);
+    ovs_rwlock_unlock(&ct_offload_classes_rwlock);
 }
 
 /* ct_offload_module_init() - register built-in CT offload providers.
@@ -126,21 +126,30 @@ ct_offload_module_init(void)
      * directly from their own module-init routines. */
 }
 
-/* ct_offload_conn_add() - notify all eligible providers of a new connection.
+/* Internal helpers -- callers must hold ct_offload_classes_rwlock (rdlock).
+ *
+ * When 'batched' is true the helper skips providers that implement
+ * batch_submit, since those were already handled by ct_offload_op_batch_submit
+ * before the per-op fallback loop runs. */
+
+/* ct_offload_conn_add__() - notify all eligible providers of a new connection.
  *
  * Iterates over registered providers and calls conn_add() on each one that
  * reports can_offload() == true for this context.  Returns the first non-zero
- * error encountered, but continues notifying remaining providers.  This allows
- * the underlying hardware conntrack details across providers function. */
-int
-ct_offload_conn_add(const struct ct_offload_ctx *ctx)
+ * error encountered, but continues notifying remaining providers. */
+static int
+ct_offload_conn_add__(const struct ct_offload_ctx *ctx, bool batched)
+    OVS_REQ_RDLOCK(ct_offload_classes_rwlock)
 {
     struct ct_offload_class_node *node;
     int ret = 0;
 
-    ovs_rwlock_rdlock(&ct_offload_rwlock);
     LIST_FOR_EACH (node, list_node, &ct_offload_classes) {
         const struct ct_offload_class *class = node->class;
+
+        if (batched && class->batch_submit) {
+            continue;
+        }
 
         if (!class->can_offload(ctx)) {
             continue;
@@ -152,57 +161,96 @@ ct_offload_conn_add(const struct ct_offload_ctx *ctx)
             ret = error;
         }
     }
-    ovs_rwlock_unlock(&ct_offload_rwlock);
 
     return ret;
 }
 
-/* ct_offload_conn_del() - notify all providers that a connection was removed.
+int
+ct_offload_conn_add(const struct ct_offload_ctx *ctx)
+{
+    int ret;
+
+    ovs_rwlock_rdlock(&ct_offload_classes_rwlock);
+    ret = ct_offload_conn_add__(ctx, false);
+    ovs_rwlock_unlock(&ct_offload_classes_rwlock);
+
+    return ret;
+}
+
+/* ct_offload_conn_del__() - notify all providers that a connection was removed.
  *
  * Called unconditionally on all providers so that each can clean up any
  * state it may have installed. */
-void
-ct_offload_conn_del(const struct ct_offload_ctx *ctx)
+static void
+ct_offload_conn_del__(const struct ct_offload_ctx *ctx, bool batched)
+    OVS_REQ_RDLOCK(ct_offload_classes_rwlock)
 {
     struct ct_offload_class_node *node;
 
-    ovs_rwlock_rdlock(&ct_offload_rwlock);
     LIST_FOR_EACH (node, list_node, &ct_offload_classes) {
-        node->class->conn_del(ctx);
+        const struct ct_offload_class *class = node->class;
+
+        if (batched && class->batch_submit) {
+            continue;
+        }
+
+        class->conn_del(ctx);
     }
-    ovs_rwlock_unlock(&ct_offload_rwlock);
 }
 
 void
-ct_offload_conn_established(const struct ct_offload_ctx *ctx)
+ct_offload_conn_del(const struct ct_offload_ctx *ctx)
+{
+    ovs_rwlock_rdlock(&ct_offload_classes_rwlock);
+    ct_offload_conn_del__(ctx, false);
+    ovs_rwlock_unlock(&ct_offload_classes_rwlock);
+}
+
+static void
+ct_offload_conn_established__(const struct ct_offload_ctx *ctx, bool batched)
+    OVS_REQ_RDLOCK(ct_offload_classes_rwlock)
 {
     struct ct_offload_class_node *node;
 
-    ovs_rwlock_rdlock(&ct_offload_rwlock);
     LIST_FOR_EACH (node, list_node, &ct_offload_classes) {
         const struct ct_offload_class *class = node->class;
+
+        if (batched && class->batch_submit) {
+            continue;
+        }
 
         if (class->conn_established) {
             class->conn_established(ctx);
         }
     }
-    ovs_rwlock_unlock(&ct_offload_rwlock);
 }
 
-/* ct_offload_conn_update() - query the hardware last-used timestamp.
+void
+ct_offload_conn_established(const struct ct_offload_ctx *ctx)
+{
+    ovs_rwlock_rdlock(&ct_offload_classes_rwlock);
+    ct_offload_conn_established__(ctx, false);
+    ovs_rwlock_unlock(&ct_offload_classes_rwlock);
+}
+
+/* ct_offload_conn_update__() - query the hardware last-used timestamp.
  *
  * Iterates over providers and returns the first non-zero timestamp returned
  * by a provider's conn_update() callback.  Returns 0 if no provider
  * supplies a timestamp. */
-long long
-ct_offload_conn_update(const struct ct_offload_ctx *ctx)
+static long long
+ct_offload_conn_update__(const struct ct_offload_ctx *ctx, bool batched)
+    OVS_REQ_RDLOCK(ct_offload_classes_rwlock)
 {
     struct ct_offload_class_node *node;
     long long last_used = 0;
 
-    ovs_rwlock_rdlock(&ct_offload_rwlock);
     LIST_FOR_EACH (node, list_node, &ct_offload_classes) {
         const struct ct_offload_class *class = node->class;
+
+        if (batched && class->batch_submit) {
+            continue;
+        }
 
         if (class->conn_update) {
             long long ts = class->conn_update(ctx);
@@ -213,43 +261,183 @@ ct_offload_conn_update(const struct ct_offload_ctx *ctx)
             }
         }
     }
-    ovs_rwlock_unlock(&ct_offload_rwlock);
 
     return last_used;
 }
 
-/* ct_offload_can_offload() - returns true if any provider can offload ctx. */
-bool
-ct_offload_can_offload(const struct ct_offload_ctx *ctx)
+long long
+ct_offload_conn_update(const struct ct_offload_ctx *ctx)
+{
+    long long ret;
+
+    ovs_rwlock_rdlock(&ct_offload_classes_rwlock);
+    ret = ct_offload_conn_update__(ctx, false);
+    ovs_rwlock_unlock(&ct_offload_classes_rwlock);
+
+    return ret;
+}
+
+/* ct_offload_can_offload__() - returns true if any provider can offload ctx. */
+static bool
+ct_offload_can_offload__(const struct ct_offload_ctx *ctx, bool batched)
+    OVS_REQ_RDLOCK(ct_offload_classes_rwlock)
 {
     struct ct_offload_class_node *node;
     bool result = false;
 
-    ovs_rwlock_rdlock(&ct_offload_rwlock);
     LIST_FOR_EACH (node, list_node, &ct_offload_classes) {
-        if (node->class->can_offload(ctx)) {
+        const struct ct_offload_class *class = node->class;
+
+        if (batched && class->batch_submit) {
+            continue;
+        }
+
+        if (class->can_offload(ctx)) {
             result = true;
             break;
         }
     }
-    ovs_rwlock_unlock(&ct_offload_rwlock);
 
     return result;
+}
+
+bool
+ct_offload_can_offload(const struct ct_offload_ctx *ctx)
+{
+    bool can_offload;
+
+    ovs_rwlock_rdlock(&ct_offload_classes_rwlock);
+    can_offload = ct_offload_can_offload__(ctx, false);
+    ovs_rwlock_unlock(&ct_offload_classes_rwlock);
+
+    return can_offload;
+}
+
+/* ct_offload_flush__() - flush all offloaded connections. */
+static void
+ct_offload_flush__(bool batched)
+    OVS_REQ_RDLOCK(ct_offload_classes_rwlock)
+{
+    struct ct_offload_class_node *node;
+
+    LIST_FOR_EACH (node, list_node, &ct_offload_classes) {
+        const struct ct_offload_class *class = node->class;
+
+        if (batched && class->batch_submit) {
+            continue;
+        }
+
+        if (class->flush) {
+            class->flush();
+        }
+    }
 }
 
 /* ct_offload_flush() - flush all offloaded connections from every provider. */
 void
 ct_offload_flush(void)
 {
-    struct ct_offload_class_node *node;
+    ovs_rwlock_rdlock(&ct_offload_classes_rwlock);
+    ct_offload_flush__(false);
+    ovs_rwlock_unlock(&ct_offload_classes_rwlock);
+}
 
-    ovs_rwlock_rdlock(&ct_offload_rwlock);
+
+/* Batch API
+ * =========
+ *
+ * The default implementation serialises each operation in the batch through
+ * the individual per-connection dispatch functions above.  All provider
+ * callbacks are invoked under the ct_offload_classes_rwlock (rdlock), so the
+ * per-operation lock/unlock overhead of the single-op path is avoided across
+ * the batch.
+ */
+
+#define CT_OFFLOAD_BATCH_INITIAL_SIZE 8
+
+/* ct_offload_op_batch_add() - append one operation to the batch.
+ *
+ * The batch grows dynamically; callers need not pre-size it. */
+void
+ct_offload_op_batch_add(struct ct_offload_op_batch *batch,
+                        enum ct_offload_op_type type,
+                        const struct ct_offload_ctx *ctx)
+{
+    if (batch->n_ops == batch->allocated) {
+        batch->allocated = batch->allocated
+                           ? batch->allocated * 2
+                           : CT_OFFLOAD_BATCH_INITIAL_SIZE;
+        batch->ops = xrealloc(batch->ops,
+                              batch->allocated * sizeof *batch->ops);
+    }
+
+    struct ct_offload_op *op = &batch->ops[batch->n_ops++];
+
+    op->type  = type;
+    op->ctx   = *ctx;
+    op->error = 0;
+}
+
+/* ct_offload_op_batch_submit() - execute every operation in the batch.
+ *
+ * Each op's 'error' field is set to the result of the corresponding
+ * per-connection dispatch.  The rwlock is held for the duration of the
+ * batch; providers are invoked directly rather than through the public
+ * single-op wrappers to avoid repeated lock/unlock cycles. */
+void
+ct_offload_op_batch_submit(struct ct_offload_op_batch *batch)
+{
+    struct ct_offload_class_node *node;
+    struct ct_offload_op *op;
+
+    ovs_rwlock_rdlock(&ct_offload_classes_rwlock);
+
     LIST_FOR_EACH (node, list_node, &ct_offload_classes) {
         const struct ct_offload_class *class = node->class;
 
-        if (class->flush) {
-            class->flush();
+        if (class->batch_submit) {
+            class->batch_submit(batch);
         }
     }
-    ovs_rwlock_unlock(&ct_offload_rwlock);
+
+    CT_OFFLOAD_BATCH_OP_FOR_EACH (idx, op, batch) {
+
+        switch (op->type) {
+        case CT_OFFLOAD_OP_ADD:
+            op->error = ct_offload_conn_add__(&op->ctx, true);
+            break;
+
+        case CT_OFFLOAD_OP_DEL:
+            ct_offload_conn_del__(&op->ctx, true);
+            op->error = 0;
+            break;
+
+        case CT_OFFLOAD_OP_UPD: {
+            long long ts = ct_offload_conn_update__(&op->ctx, true);
+
+            op->error = ts ? 0 : EIO;
+            break;
+        }
+
+        case CT_OFFLOAD_OP_POLICY:
+            op->error = ct_offload_can_offload__(&op->ctx, true) ? 0 : EPERM;
+            break;
+
+        case CT_OFFLOAD_OP_FLUSH:
+            ct_offload_flush__(true);
+            op->error = 0;
+            break;
+
+        case CT_OFFLOAD_OP_EST:
+            ct_offload_conn_established__(&op->ctx, true);
+            op->error = 0;
+            break;
+
+        default:
+            op->error = EINVAL;
+            break;
+        }
+    }
+
+    ovs_rwlock_unlock(&ct_offload_classes_rwlock);
 }
