@@ -162,6 +162,17 @@ struct conn {
     void *private[CT_CONN_PRIVATE_MAX];
 };
 
+/* Initialize the mutex and reclaimed flag of a freshly allocated conn.
+ * Must be called before conn->lock is acquired or before the conn is made
+ * visible to other threads.  Each L4 new_conn callback is responsible for
+ * calling this on the conn it allocates. */
+static inline void
+conn_init(struct conn *conn)
+{
+    ovs_mutex_init_adaptive(&conn->lock);
+    atomic_flag_clear(&conn->reclaimed);
+}
+
 enum ct_update_res {
     CT_UPDATE_INVALID,
     CT_UPDATE_VALID,
@@ -285,17 +296,6 @@ struct ct_l4_proto {
                                struct ct_dpif_protoinfo *);
 };
 
-/* Initialize the mutex and reclaimed flag of a freshly allocated conn.
- * Must be called before conn->lock is acquired or before the conn is made
- * visible to other threads.  Each L4 new_conn callback is responsible for
- * calling this on the conn it allocates. */
-static inline void
-conn_init(struct conn *conn)
-{
-    ovs_mutex_init_adaptive(&conn->lock);
-    atomic_flag_clear(&conn->reclaimed);
-}
-
 /* Transient lookup context built for each packet; private to conntrack.c and
  * the ALG helper modules. */
 struct conn_lookup_ctx {
@@ -375,6 +375,10 @@ void expectation_create(struct conntrack *ct, ovs_be16 dst_port,
 /* ALG module initialization functions. */
 void conntrack_ftp_init(void);
 void conntrack_tftp_init(void);
+
+/* Shared private slot ID for all L4 protocol state; valid after the
+ * corresponding L4 module init (e.g. conntrack_tcp_init()) is called. */
+extern ct_private_id_t conntrack_l4_private_id;
 
 /* conn_private_get() / conn_private_set()
  *
