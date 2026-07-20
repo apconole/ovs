@@ -474,6 +474,7 @@ tcp_new_conn(struct conntrack *ct, struct dp_packet *pkt, long long now,
     dst->state = CT_DPIF_TCPS_CLOSED;
 
     newconn->up.tp_id = tp_id;
+    conn_init(&newconn->up);
     conn_init_expiration(ct, &newconn->up, CT_TM_TCP_FIRST_PACKET, now);
 
     return &newconn->up;

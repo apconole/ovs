@@ -302,6 +302,7 @@ unixctl
 untrusted
 upcall
 upcalls
+urcu
 us
 usec
 userspace

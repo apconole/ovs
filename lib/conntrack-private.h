@@ -156,6 +156,10 @@ struct conn {
     bool alg_related; /* True if alg data connection. */
 
     uint32_t tp_id; /* Timeout policy ID. */
+
+    /* Private per-module storage.  Indexed by ct_private_id_t values obtained
+     * via conn_private_id_alloc().  Access is protected by conn->lock. */
+    void *private[CT_CONN_PRIVATE_MAX];
 };
 
 enum ct_update_res {
@@ -263,5 +267,47 @@ struct ct_l4_proto {
     void (*conn_get_protoinfo)(const struct conn *,
                                struct ct_dpif_protoinfo *);
 };
+
+/* Initialize the mutex and reclaimed flag of a freshly allocated conn.
+ * Must be called before conn->lock is acquired or before the conn is made
+ * visible to other threads.  Each L4 new_conn callback is responsible for
+ * calling this on the conn it allocates. */
+static inline void
+conn_init(struct conn *conn)
+{
+    ovs_mutex_init_adaptive(&conn->lock);
+    atomic_flag_clear(&conn->reclaimed);
+}
+
+/* conn_private_get() / conn_private_set()
+ *
+ * Fast-path accessors for per-connection private storage slots.
+ * The caller must hold conn->lock when accessing the pointer.
+ *
+ * Both functions silently no-op when 'id' is CT_PRIVATE_ID_INVALID, so
+ * callers need not guard against an unallocated slot: get() returns NULL
+ * and set() discards the value.
+ */
+static inline void *
+conn_private_get(const struct conn *conn, ct_private_id_t id)
+    OVS_REQUIRES(conn->lock)
+{
+    if (id == CT_PRIVATE_ID_INVALID) {
+        return NULL;
+    }
+    ovs_assert(id < CT_CONN_PRIVATE_MAX);
+    return conn->private[id];
+}
+
+static inline void
+conn_private_set(struct conn *conn, ct_private_id_t id, void *data)
+    OVS_REQUIRES(conn->lock)
+{
+    if (id == CT_PRIVATE_ID_INVALID) {
+        return;
+    }
+    ovs_assert(id < CT_CONN_PRIVATE_MAX);
+    conn->private[id] = data;
+}
 
 #endif /* conntrack-private.h */
