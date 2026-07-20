@@ -81,8 +81,9 @@ struct ct_offload_class {
      * the current expiration. */
     long long (*conn_update)(const struct ct_offload_ctx *);
     /* Called exactly once when the first reply-direction packet is seen
-     * for an offloaded connection. */
-    void (*conn_established)(const struct ct_offload_ctx *);
+     * for an offloaded connection.  Returns true if the connection is
+     * confirmed established in hardware, false otherwise. */
+    bool (*conn_established)(const struct ct_offload_ctx *);
     /* Check whether this provider can offload a connection. */
     bool (*can_offload)(const struct ct_offload_ctx *);
     /* Flush all offloaded connections. */
@@ -98,13 +99,29 @@ void ct_offload_unregister(const struct ct_offload_class *);
 /* Module initialization (register built-in providers). */
 void ct_offload_module_init(void);
 
-/* Per-connection offload API that dispatches to all registered providers. */
-int       ct_offload_conn_add(const struct ct_offload_ctx *);
-void      ct_offload_conn_del(const struct ct_offload_ctx *);
+/* Testing entry point: allocates the internal private slot.  Not for
+ * production use; call ct_offload_module_init() instead. */
+void ct_offload_init_for_tests(void);
+
+/* Per-connection offload API that dispatches to all registered providers.
+ * conn_add, conn_del, and conn_established require conn->lock to be held by
+ * the caller; conn_update, can_offload, and flush do not. */
+int       ct_offload_conn_add(const struct ct_offload_ctx *ctx)
+              OVS_REQUIRES(ctx->conn->lock);
+void      ct_offload_conn_del(const struct ct_offload_ctx *ctx)
+              OVS_REQUIRES(ctx->conn->lock);
 long long ct_offload_conn_update(const struct ct_offload_ctx *);
-void      ct_offload_conn_established(const struct ct_offload_ctx *);
+void      ct_offload_conn_established(const struct ct_offload_ctx *ctx)
+              OVS_REQUIRES(ctx->conn->lock);
 bool      ct_offload_can_offload(const struct ct_offload_ctx *);
 void      ct_offload_flush(void);
+
+/* Connection state query helpers.  Both require conn->lock to be held
+ * by the caller. */
+bool ct_offload_conn_is_offloaded(const struct conn *conn)
+    OVS_REQUIRES(conn->lock);
+bool ct_offload_conn_is_established(const struct conn *conn)
+    OVS_REQUIRES(conn->lock);
 
 /* Batch offload API.
  *

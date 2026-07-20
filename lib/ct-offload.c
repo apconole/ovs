@@ -20,6 +20,8 @@
 
 #include <errno.h>
 
+#include "conntrack.h"
+#include "conntrack-private.h"
 #include "ovs-thread.h"
 #include "util.h"
 
@@ -27,6 +29,14 @@
 #include "openvswitch/vlog.h"
 
 VLOG_DEFINE_THIS_MODULE(ct_offload);
+
+/* Private slot for storing per-connection offload state. */
+static ct_private_id_t ct_offload_private_id = CT_PRIVATE_ID_INVALID;
+
+/* Values stored in the private slot. */
+#define CT_OFFLOAD_STATE_NONE  ((void *)(uintptr_t) 0)  /* Not offloaded. */
+#define CT_OFFLOAD_STATE_ADDED ((void *)(uintptr_t) 1)  /* Offload pending. */
+#define CT_OFFLOAD_STATE_EST   ((void *)(uintptr_t) 2)  /* Established. */
 
 /* Node in the registered-provider list. */
 struct ct_offload_class_node {
@@ -116,14 +126,37 @@ out:
     ovs_rwlock_unlock(&ct_offload_classes_rwlock);
 }
 
+/* ct_offload_alloc_private_slot() - allocate the per-connection private slot.
+ *
+ * Called once at module init.  Logs an error if the slot pool is exhausted. */
+static void
+ct_offload_alloc_private_slot(void)
+{
+    ct_offload_private_id = conn_private_id_alloc(NULL);
+    if (ct_offload_private_id == CT_PRIVATE_ID_INVALID) {
+        VLOG_ERR("failed to allocate private slot for ct offload");
+    }
+}
+
 /* ct_offload_module_init() - register built-in CT offload providers.
  *
  * Must be called once before any connections are created. */
 void
 ct_offload_module_init(void)
 {
+    ct_offload_alloc_private_slot();
     /* No built-in providers yet; third parties call ct_offload_register()
      * directly from their own module-init routines. */
+}
+
+/* ct_offload_init_for_tests() - allocate the internal private slot for tests.
+ *
+ * Must not be called in production code; use ct_offload_module_init()
+ * instead. */
+void
+ct_offload_init_for_tests(void)
+{
+    ct_offload_alloc_private_slot();
 }
 
 /* Internal helpers -- callers must hold ct_offload_classes_rwlock (rdlock).
@@ -140,8 +173,10 @@ ct_offload_module_init(void)
 static int
 ct_offload_conn_add__(const struct ct_offload_ctx *ctx, bool batched)
     OVS_REQ_RDLOCK(ct_offload_classes_rwlock)
+    OVS_REQUIRES(ctx->conn->lock)
 {
     struct ct_offload_class_node *node;
+    bool offloaded = false;
     int ret = 0;
 
     LIST_FOR_EACH (node, list_node, &ct_offload_classes) {
@@ -157,9 +192,16 @@ ct_offload_conn_add__(const struct ct_offload_ctx *ctx, bool batched)
 
         int error = class->conn_add(ctx);
 
-        if (error && !ret) {
+        if (!error) {
+            offloaded = true;
+        } else if (!ret) {
             ret = error;
         }
+    }
+
+    if (offloaded) {
+        conn_private_set(ctx->conn, ct_offload_private_id,
+                         CT_OFFLOAD_STATE_ADDED);
     }
 
     return ret;
@@ -167,6 +209,7 @@ ct_offload_conn_add__(const struct ct_offload_ctx *ctx, bool batched)
 
 int
 ct_offload_conn_add(const struct ct_offload_ctx *ctx)
+    OVS_REQUIRES(ctx->conn->lock)
 {
     int ret;
 
@@ -184,6 +227,7 @@ ct_offload_conn_add(const struct ct_offload_ctx *ctx)
 static void
 ct_offload_conn_del__(const struct ct_offload_ctx *ctx, bool batched)
     OVS_REQ_RDLOCK(ct_offload_classes_rwlock)
+    OVS_REQUIRES(ctx->conn->lock)
 {
     struct ct_offload_class_node *node;
 
@@ -196,10 +240,13 @@ ct_offload_conn_del__(const struct ct_offload_ctx *ctx, bool batched)
 
         class->conn_del(ctx);
     }
+
+    conn_private_set(ctx->conn, ct_offload_private_id, CT_OFFLOAD_STATE_NONE);
 }
 
 void
 ct_offload_conn_del(const struct ct_offload_ctx *ctx)
+    OVS_REQUIRES(ctx->conn->lock)
 {
     ovs_rwlock_rdlock(&ct_offload_classes_rwlock);
     ct_offload_conn_del__(ctx, false);
@@ -209,8 +256,15 @@ ct_offload_conn_del(const struct ct_offload_ctx *ctx)
 static void
 ct_offload_conn_established__(const struct ct_offload_ctx *ctx, bool batched)
     OVS_REQ_RDLOCK(ct_offload_classes_rwlock)
+    OVS_REQUIRES(ctx->conn->lock)
 {
+    if (conn_private_get(ctx->conn, ct_offload_private_id)
+        != CT_OFFLOAD_STATE_ADDED) {
+        return;
+    }
+
     struct ct_offload_class_node *node;
+    bool established = false;
 
     LIST_FOR_EACH (node, list_node, &ct_offload_classes) {
         const struct ct_offload_class *class = node->class;
@@ -219,18 +273,41 @@ ct_offload_conn_established__(const struct ct_offload_ctx *ctx, bool batched)
             continue;
         }
 
-        if (class->conn_established) {
-            class->conn_established(ctx);
+        if (class->conn_established && class->conn_established(ctx)) {
+            established = true;
         }
+    }
+
+    if (established) {
+        conn_private_set(ctx->conn, ct_offload_private_id,
+                         CT_OFFLOAD_STATE_EST);
     }
 }
 
 void
 ct_offload_conn_established(const struct ct_offload_ctx *ctx)
+    OVS_REQUIRES(ctx->conn->lock)
 {
     ovs_rwlock_rdlock(&ct_offload_classes_rwlock);
     ct_offload_conn_established__(ctx, false);
     ovs_rwlock_unlock(&ct_offload_classes_rwlock);
+}
+
+bool
+ct_offload_conn_is_offloaded(const struct conn *conn)
+    OVS_REQUIRES(conn->lock)
+{
+    void *state = conn_private_get(conn, ct_offload_private_id);
+
+    return state == CT_OFFLOAD_STATE_ADDED || state == CT_OFFLOAD_STATE_EST;
+}
+
+bool
+ct_offload_conn_is_established(const struct conn *conn)
+    OVS_REQUIRES(conn->lock)
+{
+    return conn_private_get(conn, ct_offload_private_id)
+           == CT_OFFLOAD_STATE_EST;
 }
 
 /* ct_offload_conn_update__() - query the hardware last-used timestamp.
@@ -404,11 +481,15 @@ ct_offload_op_batch_submit(struct ct_offload_op_batch *batch)
 
         switch (op->type) {
         case CT_OFFLOAD_OP_ADD:
+            ovs_mutex_lock(&op->ctx.conn->lock);
             op->error = ct_offload_conn_add__(&op->ctx, true);
+            ovs_mutex_unlock(&op->ctx.conn->lock);
             break;
 
         case CT_OFFLOAD_OP_DEL:
+            ovs_mutex_lock(&op->ctx.conn->lock);
             ct_offload_conn_del__(&op->ctx, true);
+            ovs_mutex_unlock(&op->ctx.conn->lock);
             op->error = 0;
             break;
 
@@ -429,7 +510,9 @@ ct_offload_op_batch_submit(struct ct_offload_op_batch *batch)
             break;
 
         case CT_OFFLOAD_OP_EST:
+            ovs_mutex_lock(&op->ctx.conn->lock);
             ct_offload_conn_established__(&op->ctx, true);
+            ovs_mutex_unlock(&op->ctx.conn->lock);
             op->error = 0;
             break;
 

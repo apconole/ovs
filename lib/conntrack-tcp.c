@@ -44,6 +44,7 @@
 #include "conntrack-tp.h"
 #include "coverage.h"
 #include "ct-dpif.h"
+#include "ct-offload.h"
 #include "dp-packet.h"
 #include "util.h"
 
@@ -133,9 +134,11 @@ tcp_get_wscale(const struct tcp_header *tcp)
 }
 
 static bool
-tcp_bypass_seq_chk(struct conntrack *ct)
+tcp_bypass_seq_chk(struct conntrack *ct, struct conn *conn)
+    OVS_REQUIRES(conn->lock)
 {
-    if (!conntrack_get_tcp_seq_chk(ct)) {
+    if (!conntrack_get_tcp_seq_chk(ct) ||
+        ct_offload_conn_is_offloaded(conn)) {
         COVERAGE_INC(conntrack_tcp_seq_chk_bypass);
         return true;
     }
@@ -290,7 +293,7 @@ tcp_conn_update(struct conntrack *ct, struct conn *conn_,
         /* Acking not more than one window forward */
         && ((tcp_flags & TCP_RST) == 0 || orig_seq == src->seqlo
             || (orig_seq == src->seqlo + 1) || (orig_seq + 1 == src->seqlo)))
-        || tcp_bypass_seq_chk(ct)) {
+        || tcp_bypass_seq_chk(ct, conn_)) {
         /* Require an exact/+1 sequence match on resets when possible */
 
         /* update max window */
