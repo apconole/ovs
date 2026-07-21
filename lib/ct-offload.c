@@ -22,6 +22,7 @@
 
 #include "conntrack.h"
 #include "conntrack-private.h"
+#include "ct-offload-dummy.h"
 #include "dpif-offload.h"
 #include "ovs-thread.h"
 #include "util.h"
@@ -33,9 +34,12 @@
 VLOG_DEFINE_THIS_MODULE(ct_offload);
 
 /* Built-in CT offload provider classes.  Only those whose name matches a
- * registered dpif offload class will be activated by ct_offload_module_init().
- * Populated by downstream patches as concrete providers are added. */
-static const struct ct_offload_class *base_ct_offload_classes[] OVS_UNUSED = {
+ * registered dpif offload class will be activated by ct_offload_module_init(). */
+static const struct ct_offload_class *base_ct_offload_classes[] = {
+    /* Dummy provider: activated whenever the "dummy" dpif offload class is
+     * registered (hw-offload=true with a dummy datapath).  Also used directly
+     * by unit tests via ct_offload_dummy_register(). */
+    &ct_offload_dummy_class,
 };
 
 /* Private slot for storing per-connection offload state. */
@@ -156,8 +160,13 @@ void
 ct_offload_module_init(void)
 {
     ct_offload_alloc_private_slot();
-    /* No built-in providers yet; base_ct_offload_classes[] is populated as
-     * concrete providers are added in downstream patches. */
+    for (size_t i = 0; i < ARRAY_SIZE(base_ct_offload_classes); i++) {
+        const struct ct_offload_class *class = base_ct_offload_classes[i];
+
+        if (dpif_offload_class_is_registered(class->name)) {
+            ct_offload_register(class);
+        }
+    }
 }
 
 /* ct_offload_init_for_tests() - allocate the internal private slot for tests.
@@ -170,6 +179,15 @@ ct_offload_init_for_tests(void)
     ct_offload_alloc_private_slot();
 }
 
+/* Used only in testing to bypass the hardware-offload gate. */
+static bool ct_offload_forced = false;
+
+void
+ct_offload_force_enable(bool value)
+{
+    ct_offload_forced = value;
+}
+
 /* ct_offload_enabled() - returns true when hardware offload is active.
  *
  * Delegates to dpif_offload_enabled() so CT offload shares the same global
@@ -177,7 +195,7 @@ ct_offload_init_for_tests(void)
 bool
 ct_offload_enabled(void)
 {
-    return dpif_offload_enabled();
+    return dpif_offload_enabled() || ct_offload_forced;
 }
 
 /* ct_offload_set_global_cfg() - configure CT offload from OVSDB.

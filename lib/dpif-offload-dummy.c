@@ -649,14 +649,15 @@ dummy_offload_are_all_actions_supported(const struct dpif_offload *offload_,
     const struct nlattr *nla;
     size_t left;
 
-    /* Can we fully offload this flow? For now, only output actions are
-     * supported, and only to dummy-pmd netdevs where the egress port differs
-     * from the ingress port.  The latter restriction ensures that the partial
-     * offload test cases pass.
+    /* Can we fully offload this flow?  Output actions are supported for
+     * dummy-pmd netdevs where the egress port differs from the ingress port.
+     * CT actions are also accepted: the connection lifecycle is handled by the
+     * ct-offload provider (ct_offload_dummy_class when the dummy backend is
+     * active).  Recirc is not yet supported at the hardware offload layer.
      *
-     * The reason for supporting only dummy-pmd netdevs as output targets is
-     * that they provide full protection when calling netdev_send() from any
-     * thread, via a netdev-level mutex. */
+     * The reason for restricting output to dummy-pmd netdevs is that they
+     * provide full protection when calling netdev_send() from any thread,
+     * via a netdev-level mutex. */
     NL_ATTR_FOR_EACH (nla, left, actions, actions_len) {
         enum ovs_action_attr action = nl_attr_type(nla);
 
@@ -685,6 +686,11 @@ dummy_offload_are_all_actions_supported(const struct dpif_offload *offload_,
             break;
         }
 
+        case OVS_ACTION_ATTR_CT:
+            /* Handled by the ct-offload provider; accept without inspecting
+             * the nested attributes. */
+            break;
+
         case OVS_ACTION_ATTR_UNSPEC:
         case OVS_ACTION_ATTR_USERSPACE:
         case OVS_ACTION_ATTR_SET:
@@ -696,7 +702,6 @@ dummy_offload_are_all_actions_supported(const struct dpif_offload *offload_,
         case OVS_ACTION_ATTR_PUSH_MPLS:
         case OVS_ACTION_ATTR_POP_MPLS:
         case OVS_ACTION_ATTR_SET_MASKED:
-        case OVS_ACTION_ATTR_CT:
         case OVS_ACTION_ATTR_TRUNC:
         case OVS_ACTION_ATTR_PUSH_ETH:
         case OVS_ACTION_ATTR_POP_ETH:
