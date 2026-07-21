@@ -18,6 +18,7 @@
 #include <errno.h>
 
 #include "dpif-offload.h"
+#include "ct-offload.h"
 #include "dpif-offload-provider.h"
 #include "dpif-provider.h"
 #include "netdev-provider.h"
@@ -516,6 +517,19 @@ dpif_offload_enabled(void)
     return enabled;
 }
 
+/* dpif_offload_class_is_registered() - returns true if a dpif offload class
+ * with the given name has been successfully registered. */
+bool
+dpif_offload_class_is_registered(const char *name)
+{
+    bool found;
+
+    ovs_mutex_lock(&dpif_offload_mutex);
+    found = shash_find(&dpif_offload_classes, name) != NULL;
+    ovs_mutex_unlock(&dpif_offload_mutex);
+    return found;
+}
+
 bool
 dpif_offload_rebalance_policy_enabled(void)
 {
@@ -828,6 +842,8 @@ dpif_offload_set_global_cfg(const struct ovsrec_open_vswitch *cfg)
             }
         }
     }
+
+    ct_offload_set_global_cfg(cfg);
 }
 
 void

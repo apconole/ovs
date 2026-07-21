@@ -23,6 +23,7 @@
 #include "util.h"
 
 struct netdev;
+struct ovsrec_open_vswitch;
 
 /* Context for offload as part of the callbacks that all connection
  * offload APIs receive. */
@@ -102,6 +103,14 @@ void ct_offload_module_init(void);
 /* Testing entry point: allocates the internal private slot.  Not for
  * production use; call ct_offload_module_init() instead. */
 void ct_offload_init_for_tests(void);
+
+/* Global configuration: called internally by dpif_offload_set_global_cfg()
+ * to enable CT offload once hardware offload is active. */
+void ct_offload_set_global_cfg(const struct ovsrec_open_vswitch *);
+
+/* Returns true when CT offload is enabled (delegates to
+ * dpif_offload_enabled()). */
+bool ct_offload_enabled(void);
 
 /* Per-connection offload API that dispatches to all registered providers.
  * conn_add, conn_del, and conn_established require conn->lock to be held by
