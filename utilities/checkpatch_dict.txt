@@ -247,6 +247,7 @@ rip
 rss
 rsslim
 rst
+rwlock
 rx
 rxq
 sbrec
