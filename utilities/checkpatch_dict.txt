@@ -250,6 +250,7 @@ rip
 rss
 rsslim
 rst
+rwlock
 rx
 rxq
 sbrec
@@ -309,6 +310,7 @@ unassociated
 unclosed
 unicast
 unixctl
+unregister
 untrusted
 upcall
 upcalls
