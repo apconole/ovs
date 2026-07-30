@@ -1,4 +1,5 @@
 accessors
+acked
 acl
 addresssanitizer
 afxdp
@@ -342,6 +343,7 @@ wc
 wget
 whcan
 wildcard
+wscale
 x86_64
 xbundle
 xbundles

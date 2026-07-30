@@ -49,6 +49,7 @@ conn_icmp_cast(const struct conn *conn)
 static enum ct_update_res
 icmp_conn_update(struct conntrack *ct, struct conn *conn_,
                  struct dp_packet *pkt OVS_UNUSED, bool reply, long long now)
+    OVS_REQUIRES(conn_->lock)
 {
     struct conn_icmp *conn = conn_icmp_cast(conn_);
     enum ct_update_res ret = CT_UPDATE_VALID;

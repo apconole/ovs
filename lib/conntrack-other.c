@@ -46,6 +46,7 @@ conn_other_cast(const struct conn *conn)
 static enum ct_update_res
 other_conn_update(struct conntrack *ct, struct conn *conn_,
                   struct dp_packet *pkt OVS_UNUSED, bool reply, long long now)
+    OVS_REQUIRES(conn_->lock)
 {
     struct conn_other *conn = conn_other_cast(conn_);
 
