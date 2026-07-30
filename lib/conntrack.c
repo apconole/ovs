@@ -27,6 +27,7 @@
 #include "conntrack-tcp.h"
 #include "conntrack-tp.h"
 #include "coverage.h"
+#include "ct-offload.h"
 #include "crc32c.h"
 #include "csum.h"
 #include "ct-dpif.h"
@@ -533,6 +534,14 @@ conn_clean(struct conntrack *ct, struct conn *conn)
     if (zl && zl->czl.zone_limit_seq == conn->zone_limit_seq) {
         atomic_count_dec(&zl->czl.count);
     }
+
+    struct ct_offload_ctx offload_ctx = {
+        .conn          = conn,
+        .netdev_in     = NULL,
+        .input_port_id = ODPP_NONE,
+        .dir           = CT_DIR_FWD,
+    };
+    ct_offload_conn_del(&offload_ctx);
 
     ovsrcu_postpone(delete_conn, conn);
     atomic_count_dec(&ct->n_conn);
@@ -1379,6 +1388,31 @@ process_one(struct conntrack *ct, struct dp_packet *pkt,
                                   helper, alg_exp, ct_alg_ctl, tp_id);
         }
         ovs_mutex_unlock(&ct->ct_lock);
+
+        if (conn) {
+            struct ct_offload_ctx offload_ctx = {
+                .conn          = conn,
+                .netdev_in     = NULL,
+                .input_port_id = pkt->md.orig_in_port,
+                .dir           = CT_DIR_FWD,
+            };
+            ct_offload_conn_add(&offload_ctx);
+        }
+    }
+
+    if (!create_new_conn && conn && ctx->reply &&
+        (pkt->md.ct_state & CS_ESTABLISHED)) {
+        /* Notify offload providers that the connection is established.
+         * We use the reply bit to detect that the connection has
+         * transitioned and give us the input port, which should be the
+         * reverse direction port. */
+        struct ct_offload_ctx offload_ctx = {
+            .conn          = conn,
+            .netdev_in     = NULL,
+            .input_port_id = pkt->md.orig_in_port,
+            .dir           = CT_DIR_FWD,
+        };
+        ct_offload_conn_established(&offload_ctx);
     }
 
     write_ct_md(pkt, zone, conn, &ctx->key, alg_exp);
@@ -1524,18 +1558,57 @@ ct_sweep(struct conntrack *ct, struct rculist *list, long long now,
          size_t *cleaned_count)
     OVS_NO_THREAD_SAFETY_ANALYSIS
 {
+    struct ct_offload_op_batch batch;
+    struct ct_offload_op *op;
     struct conn *conn;
     size_t cleaned = 0;
     size_t count = 0;
 
+    ct_offload_op_batch_init(&batch);
     RCULIST_FOR_EACH (conn, node, list) {
         if (conn_expired(conn, now)) {
-            conn_clean(ct, conn);
-            cleaned++;
+            /* The lockless state read is safe here: the connection stays
+             * in the RCU-protected list for the duration of the sweep,
+             * and a concurrent transition at worst delays cleaning or
+             * querying by one interval.  Only established connections
+             * are queried; an added-but-not-established connection is
+             * not confirmed in hardware, so it expires normally. */
+            if (!ct_offload_conn_is_established(conn)) {
+                conn_clean(ct, conn);
+                cleaned++;
+            } else {
+                struct ct_offload_ctx offload_ctx = {
+                    .conn          = conn,
+                    .netdev_in     = NULL,
+                    .input_port_id = ODPP_NONE,
+                    .dir           = CT_DIR_FWD,
+                };
+                ct_offload_op_batch_add(&batch, CT_OFFLOAD_OP_UPD,
+                                        &offload_ctx);
+            }
         }
-
         count++;
     }
+
+    /* Submit the batch to ask providers whether each offloaded connection
+     * is still active in hardware.  The batch holds raw conn pointers;
+     * connections remain in the RCU-protected list for the duration of
+     * this sweep, so they are guaranteed live here. */
+    ct_offload_op_batch_submit(&batch);
+
+    CT_OFFLOAD_BATCH_OP_FOR_EACH (&batch, idx, op) {
+        struct conn *c = op->ctx.conn;
+
+        /* Slide the deadline only by hardware activity newer than what
+         * was already accounted for; connections whose hardware entry is
+         * gone or idle past its timeout are cleaned now. */
+        if (!ct_offload_conn_extend(c, op, now)) {
+            conn_clean(ct, c);
+            cleaned++;
+        }
+    }
+
+    ct_offload_op_batch_destroy(&batch);
 
     if (cleaned_count) {
         *cleaned_count = cleaned;

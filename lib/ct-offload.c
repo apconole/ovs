@@ -21,6 +21,7 @@
 #include <errno.h>
 
 #include "ovs-thread.h"
+#include "timeval.h"
 #include "util.h"
 
 #include "openvswitch/list.h"
@@ -33,10 +34,22 @@ VLOG_DEFINE_THIS_MODULE(ct_offload);
  * connections are created. */
 static ct_private_id_t ct_offload_private_id = CT_PRIVATE_ID_INVALID;
 
-/* Values stored in the private slot. */
-#define CT_OFFLOAD_STATE_NONE  ((void *)(uintptr_t) 0)  /* Not offloaded. */
-#define CT_OFFLOAD_STATE_ADDED ((void *)(uintptr_t) 1)  /* Offload pending. */
-#define CT_OFFLOAD_STATE_EST   ((void *)(uintptr_t) 2)  /* Established. */
+enum ct_offload_state {
+    CT_OFFLOAD_STATE_NONE,          /* Not offloaded. */
+    CT_OFFLOAD_STATE_ADDED,         /* Offload pending. */
+    CT_OFFLOAD_STATE_EST            /* Established. */
+};
+
+/* Per-connection offload data stored in the private slot; NULL (the
+ * initial slot value) means never offloaded.  The state member is written
+ * under conn->lock; last_extend_ts is initialized when the connection is
+ * established and afterwards only touched by the expiration sweeper,
+ * which runs under ct_lock. */
+struct ct_offload_data {
+    enum ct_offload_state state;
+    long long last_extend_ts;       /* Last hardware timestamp used to
+                                     * extend the connection's expiration. */
+};
 
 /* Node in the registered-provider list. */
 struct ct_offload_class_node {
@@ -103,10 +116,10 @@ ct_offload_register(const struct ct_offload_class *class)
 
     /* The private slot must exist before any connections are created;
      * registration is documented to happen that early, so allocate on
-     * first use.  The stored state is a tagged value, not allocated
-     * memory, so no destructor is required. */
+     * first use.  Per-connection data is heap allocated, so the slot is
+     * registered with free() as its destructor. */
     if (ct_offload_private_id == CT_PRIVATE_ID_INVALID) {
-        ct_offload_private_id = conn_private_id_alloc(NULL);
+        ct_offload_private_id = conn_private_id_alloc(free);
     }
 
     error = class->init ? class->init() : 0;
@@ -258,30 +271,35 @@ static void
 ct_offload_op_mark(struct ct_offload_op *op)
 {
     struct conn *conn = op->ctx.conn;
-    void *state;
+    struct ct_offload_data *data;
 
     if (ct_offload_private_id == CT_PRIVATE_ID_INVALID) {
         return;
     }
 
     ovs_mutex_lock(&conn->lock);
-    state = conn_private_get(conn, ct_offload_private_id);
+    data = conn_private_get(conn, ct_offload_private_id);
 
     switch (op->type) {
     case CT_OFFLOAD_OP_ADD:
-        if (!op->error && state == CT_OFFLOAD_STATE_NONE) {
-            conn_private_set(conn, ct_offload_private_id,
-                             CT_OFFLOAD_STATE_ADDED);
+        if (!op->error && !data) {
+            data = xzalloc(sizeof *data);
+            data->state = CT_OFFLOAD_STATE_ADDED;
+            conn_private_set(conn, ct_offload_private_id, data);
         }
         break;
     case CT_OFFLOAD_OP_EST:
-        if (!op->error && state == CT_OFFLOAD_STATE_ADDED) {
-            conn_private_set(conn, ct_offload_private_id,
-                             CT_OFFLOAD_STATE_EST);
+        if (!op->error && data
+            && data->state == CT_OFFLOAD_STATE_ADDED) {
+            data->state = CT_OFFLOAD_STATE_EST;
+            /* Baseline for expiration sliding: hardware activity at or
+             * after this point advances the deadline. */
+            data->last_extend_ts = time_msec();
         }
         break;
     case CT_OFFLOAD_OP_DEL:
-        conn_private_set(conn, ct_offload_private_id, CT_OFFLOAD_STATE_NONE);
+        conn_private_set(conn, ct_offload_private_id, NULL);
+        free(data);
         break;
     case CT_OFFLOAD_OP_UPD:
         break;
@@ -349,11 +367,22 @@ ct_offload_conn_add(const struct ct_offload_ctx *ctx)
 /* ct_offload_conn_del() - submit a DEL op for 'ctx' to every open
  * provider.
  *
- * Called unconditionally so that each provider can clean up any state it
- * may have installed. */
+ * Called unconditionally on connection deletion; the tracked check is
+ * performed internally so that providers are not disturbed for connections
+ * that were never offloaded. */
 void
 ct_offload_conn_del(const struct ct_offload_ctx *ctx)
 {
+    bool tracked;
+
+    ovs_mutex_lock(&ctx->conn->lock);
+    tracked = ct_offload_conn_is_tracked(ctx->conn);
+    ovs_mutex_unlock(&ctx->conn->lock);
+
+    if (!tracked) {
+        return;
+    }
+
     struct ct_offload_op op = { .type = CT_OFFLOAD_OP_DEL, .ctx = *ctx };
     struct ct_offload_op_batch batch = {
         .ops = &op, .n_ops = 1, .allocated = 1
@@ -381,12 +410,25 @@ ct_offload_conn_update(const struct ct_offload_ctx *ctx)
 
 /* ct_offload_conn_established() - submit an EST op for 'ctx'.
  *
- * Returns true if the connection is fully established in hardware, false
- * if establishment failed or was deferred, or no providers are open (the
+ * The transition is only meaningful for connections a provider already
+ * accepted, so the tracked check is performed internally.  Returns true
+ * if the connection is fully established in hardware, false if
+ * establishment failed or was deferred, or no providers are open (the
  * error field stays EBUSY in that case). */
 bool
 ct_offload_conn_established(const struct ct_offload_ctx *ctx)
 {
+    bool pending;
+
+    ovs_mutex_lock(&ctx->conn->lock);
+    pending = ct_offload_conn_is_tracked(ctx->conn)
+              && !ct_offload_conn_is_established(ctx->conn);
+    ovs_mutex_unlock(&ctx->conn->lock);
+
+    if (!pending) {
+        return false;
+    }
+
     struct ct_offload_op op = {
         .type = CT_OFFLOAD_OP_EST, .ctx = *ctx, .error = EBUSY
     };
@@ -434,9 +476,7 @@ ct_offload_conn_is_tracked(const struct conn *conn)
         return false;
     }
 
-    void *state = conn_private_get(conn, ct_offload_private_id);
-
-    return state == CT_OFFLOAD_STATE_ADDED || state == CT_OFFLOAD_STATE_EST;
+    return conn_private_get(conn, ct_offload_private_id) != NULL;
 }
 
 /* ct_offload_conn_is_established() - returns true if a provider confirmed
@@ -449,6 +489,65 @@ ct_offload_conn_is_established(const struct conn *conn)
         return false;
     }
 
-    return conn_private_get(conn, ct_offload_private_id)
-           == CT_OFFLOAD_STATE_EST;
+    struct ct_offload_data *data =
+        conn_private_get(conn, ct_offload_private_id);
+
+    return data && data->state == CT_OFFLOAD_STATE_EST;
+}
+
+/* ct_offload_conn_extend() - slide 'conn''s expiration to account for
+ * hardware activity.
+ *
+ * Used by the conntrack expiration sweeper after a connection has expired
+ * in software but is still established in hardware.  'op' carries the
+ * result of a CT_OFFLOAD_OP_UPD query; 'now' is the sweeper's current
+ * time.
+ *
+ * The connection's existing expiration encodes its policy timeout applied
+ * to the last activity seen in software.  Rather than blindly extending by
+ * one sweep interval, which would keep stale connections alive forever,
+ * the deadline is slid only by how much newer the hardware's last-used
+ * timestamp is than the timestamp used at the previous extension:
+ * hardware traffic advances the deadline, and a frozen (or missing)
+ * timestamp lets the connection expire normally.  Returns true if the
+ * expiration was extended past 'now'. */
+bool
+ct_offload_conn_extend(struct conn *conn, const struct ct_offload_op *op,
+                       long long now)
+{
+    struct ct_offload_data *data;
+    long long new_exp;
+
+    if (op->error || !op->last_used
+        || ct_offload_private_id == CT_PRIVATE_ID_INVALID) {
+        return false;
+    }
+
+    data = conn_private_get(conn, ct_offload_private_id);
+    if (!data) {
+        return false;
+    }
+
+    long long base = data->last_extend_ts ? data->last_extend_ts : now;
+
+    if (op->last_used <= base) {
+        /* No hardware activity newer than what was already accounted for. */
+        return false;
+    }
+
+    long long cur;
+    atomic_read_relaxed(&conn->expiration, &cur);
+
+    new_exp = cur + (op->last_used - base);
+    data->last_extend_ts = op->last_used;
+
+    if (new_exp <= now) {
+        return false;
+    }
+
+    if (new_exp > cur) {
+        atomic_store_relaxed(&conn->expiration, new_exp);
+    }
+
+    return true;
 }

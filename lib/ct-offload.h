@@ -24,37 +24,41 @@
 struct netdev;
 
 /* Context for offload as part of the callbacks that all connection
- * offload APIs receive. */
+ * offload APIs receive.  The direction identifies which of the
+ * connection's keys is the packet's match key; providers holding
+ * conn->lock can derive either direction's key via
+ * conn->key_node[dir].key. */
 struct ct_offload_ctx {
     struct conn *conn;              /* Connection object being offloaded. */
     struct netdev *netdev_in;       /* Input netdev (may be NULL). */
     odp_port_t input_port_id;       /* ODP port number. */
-    const struct conn_key *key;     /* Forward-direction 5-tuple. */
+    enum key_dir dir;               /* Direction of 'conn' relative to the
+                                     * packet that triggered the op. */
 };
 
 /* Operations delivered to a provider's batch_submit() callback.  Each op
  * carries its own 'ctx'; the fields each type uses are noted below.  The
  * provider fills in the op result fields ('error', 'last_used'):
  *
- *   CT_OFFLOAD_OP_ADD (uses all ctx fields):
+ *   CT_OFFLOAD_OP_ADD (uses conn, netdev_in, input_port_id, dir):
  *       Attempts to offload the connection.  On success, the provider is
  *       expected to eventually install the necessary hardware state.
  *       Sets op->error to 0 if accepted, EOPNOTSUPP if this provider does
  *       not handle the connection, or another positive errno on failure.
  *
- *   CT_OFFLOAD_OP_DEL (uses conn, key):
+ *   CT_OFFLOAD_OP_DEL (uses conn, dir):
  *       Removes any offloaded state for the connection.  Delivered even
  *       if the ADD op was declined or never issued; providers must
  *       tolerate unknown connections.  Sets op->error to 0.
  *
- *   CT_OFFLOAD_OP_UPD (uses conn, key):
+ *   CT_OFFLOAD_OP_UPD (uses conn, dir):
  *       Queries hardware for the last-used time of an offloaded
  *       connection.  Sets op->last_used to the last-used time in
  *       milliseconds since epoch, or 0 if the connection is not
  *       offloaded in this provider or no timestamp is available.
  *       Sets op->error to 0.
  *
- *   CT_OFFLOAD_OP_EST (uses conn, netdev_in, input_port_id):
+ *   CT_OFFLOAD_OP_EST (uses conn, input_port_id, dir):
  *       Notifies that the first reply-direction packet was seen, which
  *       identifies the reverse-direction input port.  Sets op->error to
  *       0 once the connection is fully established in hardware, or EBUSY
@@ -198,15 +202,27 @@ void ct_offload_close(const char *name);
 void ct_offload_module_init(void);
 
 /* Offload state of a connection, tracked by the framework in a
- * conn-private slot and updated from ct_offload_op_batch_submit():
- * CT_OFFLOAD_STATE_NONE (never offloaded or removed), _ADDED (a provider
- * accepted the ADD op; hardware flow may not be installed yet), or _EST
- * (a provider confirmed establishment in hardware).
+ * conn-private slot and updated from ct_offload_op_batch_submit(): never
+ * offloaded or removed, added (a provider accepted the ADD op; hardware
+ * flow may not be installed yet), or established (a provider confirmed
+ * establishment in hardware).
  *
  * Both helpers require conn->lock and tolerate providers never having
  * been registered. */
 bool ct_offload_conn_is_tracked(const struct conn *);
 bool ct_offload_conn_is_established(const struct conn *);
+
+/* ct_offload_conn_extend() - slide 'conn''s expiration to account for
+ * hardware activity reported in 'op' (the result of a CT_OFFLOAD_OP_UPD).
+ *
+ * The deadline is advanced only by how much newer the hardware last-used
+ * timestamp is than the one accounted for at the previous extension, so
+ * stale hardware entries expire normally instead of being extended every
+ * sweep forever.  'now' is the current time.  Intended for the conntrack
+ * expiration sweeper; returns true if the expiration was extended past
+ * 'now'. */
+bool ct_offload_conn_extend(struct conn *, const struct ct_offload_op *op,
+                            long long now);
 
 /* Single-operation convenience wrappers around ct_offload_op_batch_*(),
  * each submitting a batch of one op to every open provider.
@@ -218,6 +234,9 @@ bool ct_offload_conn_is_established(const struct conn *);
  *
  * Callers must not hold conn->lock; see the locking notes in ct-offload.c. */
 void      ct_offload_conn_add(const struct ct_offload_ctx *);
+
+/* Submits a DEL op unless the connection was never offloaded; the
+ * tracked check is performed internally. */
 void      ct_offload_conn_del(const struct ct_offload_ctx *);
 
 /* Returns the hardware last-used timestamp in milliseconds since epoch,
