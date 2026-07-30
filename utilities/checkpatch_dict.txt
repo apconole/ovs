@@ -70,6 +70,7 @@ enum
 enums
 eol
 epasv
+epsv
 erspan
 ether
 ethernet
@@ -112,6 +113,7 @@ icmpv6
 idl
 ifdef
 ifindex
+init
 initializer
 inlined
 int
@@ -273,6 +275,7 @@ strcmp
 struct
 submodule
 subnet
+substring
 subtable
 syscall
 tc
