@@ -157,6 +157,20 @@ expectation_clean(struct conntrack *ct, const struct conn_key *parent_key);
 
 static struct ct_l4_proto *l4_protos[UINT8_MAX + 1];
 
+/* Private per-connection storage slot registry.
+ *
+ * conn_private_id_alloc() is only called during single-threaded module
+ * initialization, so ct_private_next_id needs no synchronization.
+ * ct_private_slots[] is written once per slot at module initialization and
+ * then read-only for the lifetime of the process, so no additional locking
+ * is required to read the destructor pointer. */
+struct ct_private_slot {
+    void (*destructor)(void *); /* NULL means no cleanup required. */
+};
+
+static struct ct_private_slot ct_private_slots[CT_CONN_PRIVATE_MAX];
+static unsigned int ct_private_next_id;
+
 static void
 handle_ftp_ctl(struct conntrack *ct, const struct conn_lookup_ctx *ctx,
                struct dp_packet *pkt, struct conn *ec, long long now,
@@ -605,6 +619,23 @@ static void
 conn_force_expire(struct conn *conn)
 {
     atomic_store_relaxed(&conn->expiration, 0);
+}
+
+ct_private_id_t
+conn_private_id_alloc(void (*destructor)(void *))
+{
+    unsigned int id = ct_private_next_id;
+
+    if (id >= CT_CONN_PRIVATE_MAX) {
+        VLOG_ERR_ONCE("conntrack: all %u private storage slots are in use; "
+                      "cannot allocate a new one",
+                      (unsigned int) CT_CONN_PRIVATE_MAX);
+        return CT_PRIVATE_ID_INVALID;
+    }
+
+    ct_private_next_id++;
+    ct_private_slots[id].destructor = destructor;
+    return id;
 }
 
 /* Destroys the connection tracker 'ct' and frees all the allocated memory.
@@ -1082,8 +1113,6 @@ conn_not_found(struct conntrack *ct, struct dp_packet *pkt,
             nc->parent_key = alg_exp->parent_key;
         }
 
-        ovs_mutex_init_adaptive(&nc->lock);
-        atomic_flag_clear(&nc->reclaimed);
         fwd_key_node->dir = CT_DIR_FWD;
         rev_key_node->dir = CT_DIR_REV;
 
@@ -2716,6 +2745,14 @@ new_conn(struct conntrack *ct, struct dp_packet *pkt, struct conn_key *key,
 static void
 delete_conn__(struct conn *conn)
 {
+    /* Invoke registered destructors for any non-NULL private slots. */
+    unsigned int n = MIN(ct_private_next_id, CT_CONN_PRIVATE_MAX);
+    for (unsigned int i = 0; i < n; i++) {
+        if (ct_private_slots[i].destructor && conn->private[i]) {
+            ct_private_slots[i].destructor(conn->private[i]);
+        }
+    }
+
     free(conn->alg);
     free(conn);
 }
