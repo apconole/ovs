@@ -252,6 +252,17 @@ struct conntrack {
  *    3. 'resources_lock'
  */
 
+/* ALG control type identifiers.  These determine which application-layer
+ * gateway helper applies to a given connection. */
+enum ct_alg_ctl_type {
+    CT_ALG_CTL_NONE,
+    CT_ALG_CTL_FTP,
+    CT_ALG_CTL_TFTP,
+    /* SIP is not enabled through OpenFlow and is present only as an example
+     * of an ALG that allows a wildcard source IP address. */
+    CT_ALG_CTL_SIP,
+};
+
 extern struct ct_l4_proto ct_proto_tcp;
 extern struct ct_l4_proto ct_proto_other;
 extern struct ct_l4_proto ct_proto_icmp4;
@@ -278,6 +289,35 @@ conn_init(struct conn *conn)
     ovs_mutex_init_adaptive(&conn->lock);
     atomic_flag_clear(&conn->reclaimed);
 }
+
+/* Transient lookup context built for each packet. */
+struct conn_lookup_ctx {
+    struct conn_key key;
+    struct conn *conn;
+    uint32_t hash;
+    bool reply;
+    bool icmp_related;
+};
+
+/* conn_update_state_dist() hook: hooks intercept connection state
+ * transitions, called in ascending priority order until one returns
+ * true (handled); otherwise the default conn_update_state() runs.
+ * conn->lock is NOT held on entry. */
+typedef bool (*conn_update_state_hook_fn)(
+    struct conntrack *ct, struct dp_packet *pkt,
+    struct conn_lookup_ctx *ctx, struct conn *conn,
+    const struct nat_action_info_t *nat_action_info,
+    enum ct_alg_ctl_type ct_alg_ctl, long long now,
+    bool *create_new_conn);
+
+enum conn_update_state_hook_priority {
+    CT_HOOK_PRI_HIGH   =  50,  /* Before built-in ALG handlers. */
+    CT_HOOK_PRI_NORMAL = 100,  /* Default; used by built-in ALG handlers. */
+    CT_HOOK_PRI_LOW    = 150,  /* After built-in ALG handlers. */
+};
+
+void conn_update_state_hook_register(int priority,
+                                     conn_update_state_hook_fn);
 
 /* Fast-path accessors; caller holds conn->lock.  Both no-op when 'id'
  * is CT_PRIVATE_ID_INVALID (get returns NULL, set discards). */
