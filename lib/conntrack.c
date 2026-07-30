@@ -27,6 +27,7 @@
 #include "conntrack-tcp.h"
 #include "conntrack-tp.h"
 #include "coverage.h"
+#include "ct-offload.h"
 #include "crc32c.h"
 #include "csum.h"
 #include "ct-dpif.h"
@@ -512,7 +513,9 @@ static void
 conn_clean(struct conntrack *ct, struct conn *conn)
     OVS_EXCLUDED(conn->lock, ct->ct_lock)
 {
-    if (atomic_flag_test_and_set(&conn->reclaimed)) {
+    bool reclaimed = false;
+    if (!atomic_compare_exchange_strong(&conn->reclaimed, &reclaimed,
+                                        true)) {
         return;
     }
 
@@ -524,6 +527,14 @@ conn_clean(struct conntrack *ct, struct conn *conn)
     if (zl && zl->czl.zone_limit_seq == conn->zone_limit_seq) {
         atomic_count_dec(&zl->czl.count);
     }
+
+    struct ct_offload_ctx offload_ctx = {
+        .conn          = conn,
+        .netdev_in     = NULL,
+        .input_port_id = ODPP_NONE,
+        .dir           = CT_DIR_FWD,
+    };
+    ct_offload_conn_del(&offload_ctx);
 
     ovsrcu_postpone(delete_conn, conn);
     atomic_count_dec(&ct->n_conn);
@@ -1370,6 +1381,29 @@ process_one(struct conntrack *ct, struct dp_packet *pkt,
                                   helper, alg_exp, ct_alg_ctl, tp_id);
         }
         ovs_mutex_unlock(&ct->ct_lock);
+
+        if (conn) {
+            struct ct_offload_ctx offload_ctx = {
+                .conn          = conn,
+                .netdev_in     = NULL,
+                .input_port_id = pkt->md.orig_in_port,
+                .dir           = CT_DIR_FWD,
+            };
+            ct_offload_conn_add(&offload_ctx);
+        }
+    }
+
+    if (!create_new_conn && conn && ctx->reply &&
+        (pkt->md.ct_state & CS_ESTABLISHED)) {
+        /* EST notify: the reply packet carries the reverse-direction
+         * input port. */
+        struct ct_offload_ctx offload_ctx = {
+            .conn          = conn,
+            .netdev_in     = NULL,
+            .input_port_id = pkt->md.orig_in_port,
+            .dir           = CT_DIR_REV,
+        };
+        ct_offload_conn_notify_established(&offload_ctx);
     }
 
     write_ct_md(pkt, zone, conn, &ctx->key, alg_exp);
@@ -1515,18 +1549,64 @@ ct_sweep(struct conntrack *ct, struct rculist *list, long long now,
          size_t *cleaned_count)
     OVS_NO_THREAD_SAFETY_ANALYSIS
 {
+    struct ct_offload_op_batch batch;
+    struct ct_offload_op *op;
     struct conn *conn;
     size_t cleaned = 0;
     size_t count = 0;
 
+    ct_offload_op_batch_init(&batch);
     RCULIST_FOR_EACH (conn, node, list) {
         if (conn_expired(conn, now)) {
-            conn_clean(ct, conn);
-            cleaned++;
-        }
+            /* Conns and their offload data are RCU-freed and the sweeper
+             * stays non-quiescent for the whole scan, so the raw pointers
+             * are safe; the offload state itself is read under conn->lock. */
+            bool tracked;
 
+            ovs_mutex_lock(&conn->lock);
+            tracked = ct_offload_conn_is_tracked(conn);
+            ovs_mutex_unlock(&conn->lock);
+
+            if (!tracked) {
+                conn_clean(ct, conn);
+                cleaned++;
+            } else {
+                struct ct_offload_ctx offload_ctx = {
+                    .conn          = conn,
+                    .netdev_in     = NULL,
+                    .input_port_id = ODPP_NONE,
+                    .dir           = CT_DIR_FWD,
+                };
+                ct_offload_op_batch_add(&batch, CT_OFFLOAD_OP_UPD,
+                                        &offload_ctx);
+            }
+        }
         count++;
     }
+
+    /* The batch holds raw conn pointers; see the lifetime note above. */
+    ct_offload_op_batch_submit(&batch);
+
+    CT_OFFLOAD_BATCH_OP_FOR_EACH (&batch, idx, op) {
+        struct conn *c = op->ctx.conn;
+
+        if (op->error == ENOENT) {
+            /* Provider evicted the entry: demote to software-only
+             * tracking.  If idle, it still expires on a later sweep. */
+            ct_offload_conn_demote(c);
+            continue;
+        }
+
+        /* Slide the deadline only by hardware activity newer than what
+         * was already accounted for; connections whose hardware entry is
+         * gone or idle past its timeout are cleaned now. */
+        if (!ct_offload_conn_extend(c, op, now)) {
+            conn_clean(ct, c);
+            cleaned++;
+        }
+    }
+
+    ct_offload_op_batch_destroy(&batch);
 
     if (cleaned_count) {
         *cleaned_count = cleaned;

@@ -140,7 +140,7 @@ tcp_bypass_seq_chk(struct conntrack *ct, struct conn *conn)
     /* While hardware-confirmed, not every segment is visible to
      * software, so validation is skipped.  Segments that do reach
      * software still update the baselines, so validation resumes
-     * correctly after demotion. */
+     * correctly after demotion (ct_offload_conn_demote()). */
     if (!conntrack_get_tcp_seq_chk(ct) ||
         ct_offload_conn_is_hw_confirmed(conn)) {
         COVERAGE_INC(conntrack_tcp_seq_chk_bypass);

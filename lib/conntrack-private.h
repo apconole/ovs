@@ -97,7 +97,7 @@ struct conn {
     struct conn_key parent_key; /* Only used for orig_tuple support. */
     uint16_t nat_action;
     char *alg;
-    atomic_flag reclaimed; /* False during the lifetime of the connection,
+    atomic_bool reclaimed; /* False during the lifetime of the connection,
                             * True as soon as a thread has started freeing
                             * its memory. */
 
@@ -137,7 +137,7 @@ static inline void
 conn_init(struct conn *conn)
 {
     ovs_mutex_init_adaptive(&conn->lock);
-    atomic_flag_clear(&conn->reclaimed);
+    atomic_store_relaxed(&conn->reclaimed, false);
 }
 
 enum ct_update_res {

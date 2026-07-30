@@ -66,7 +66,11 @@ struct ct_offload_ctx {
  *
  *   CT_OFFLOAD_OP_UPD (uses conn, dir):
  *       Sets op->last_used to the hardware last-used time in ms since
- *       epoch (0 if none).  Sets op->error to 0.  May set
+ *       epoch (0 if none), and op->error to 0, or ENOENT if the
+ *       provider previously accepted the connection and has since
+ *       evicted it -- the framework then demotes it to software-only
+ *       tracking.  A provider that never accepted the connection must
+ *       leave the result fields untouched.  May set
  *       op->hw_confirmed if the provider noticed the connection active
  *       on its own.  Leave the result fields untouched when not
  *       holding the connection.
@@ -209,10 +213,28 @@ void ct_offload_module_init(void);
 bool ct_offload_conn_is_tracked(const struct conn *);
 bool ct_offload_conn_is_hw_confirmed(const struct conn *);
 
+/* ct_offload_conn_extend() - slide 'conn''s expiration forward by
+ * hardware activity reported in 'op' (a CT_OFFLOAD_OP_UPD result).
+ *
+ * The deadline advances only by hardware activity newer than what was
+ * accounted for at the previous extension, so idle or evicted entries
+ * expire normally instead of being extended forever.  Returns true if
+ * the expiration was extended past 'now'. */
+bool ct_offload_conn_extend(struct conn *, const struct ct_offload_op *op,
+                            long long now);
+
+/* ct_offload_conn_demote() - drop the offload tracking for 'conn'
+ * without destroying it.  Used by the sweeper when a provider reports
+ * ENOENT (eviction); no DEL op, as the provider already dropped its
+ * state. */
+void ct_offload_conn_demote(struct conn *);
+
 /* Single-operation convenience wrappers around ct_offload_op_batch_*(),
  * each submitting a batch of one op to every open provider.  Callers
  * must not hold conn->lock; see the locking notes in ct-offload.c. */
 void      ct_offload_conn_add(const struct ct_offload_ctx *);
+
+/* Submits a DEL op unless the connection was never offloaded. */
 void      ct_offload_conn_del(const struct ct_offload_ctx *);
 
 /* Returns the hardware last-used time in ms since epoch, or 0. */

@@ -290,6 +290,7 @@ ct_offload_op_mark(struct ct_offload_op *op)
 {
     struct conn *conn = op->ctx.conn;
     struct ct_offload_data *data;
+    bool finally_delete = false;
 
     if (ct_offload_private_id == CT_PRIVATE_ID_INVALID) {
         return;
@@ -301,9 +302,17 @@ ct_offload_op_mark(struct ct_offload_op *op)
     switch (op->type) {
     case CT_OFFLOAD_OP_ADD:
         if (!op->error && !data) {
+            bool reclaimed = false;
+
             data = xzalloc(sizeof *data);
             data->state = CT_OFFLOAD_STATE_ADDED;
             conn_private_set(conn, ct_offload_private_id, data);
+
+            /* The conn may have been reclaimed between process_one()
+             * dropping ct->ct_lock and this mark, in which case
+             * conn_clean() skipped the DEL; send it ourselves. */
+            atomic_read_relaxed(&conn->reclaimed, &reclaimed);
+            finally_delete = reclaimed;
         }
         if (data && op->hw_confirmed) {
             ct_offload_data_hw_confirm(data);
@@ -329,6 +338,10 @@ ct_offload_op_mark(struct ct_offload_op *op)
         break;
     }
     ovs_mutex_unlock(&conn->lock);
+
+    if (finally_delete) {
+        ct_offload_conn_del(&op->ctx);
+    }
 }
 
 /* ct_offload_op_batch_submit() - submit 'batch' to every open provider.
@@ -386,6 +399,16 @@ ct_offload_conn_add(const struct ct_offload_ctx *ctx)
 void
 ct_offload_conn_del(const struct ct_offload_ctx *ctx)
 {
+    bool tracked;
+
+    ovs_mutex_lock(&ctx->conn->lock);
+    tracked = ct_offload_conn_is_tracked(ctx->conn);
+    ovs_mutex_unlock(&ctx->conn->lock);
+
+    if (!tracked) {
+        return;
+    }
+
     struct ct_offload_op op = { .type = CT_OFFLOAD_OP_DEL, .ctx = *ctx };
     struct ct_offload_op_batch batch = {
         .ops = &op, .n_ops = 1, .allocated = 1
@@ -413,6 +436,17 @@ ct_offload_conn_update(const struct ct_offload_ctx *ctx)
 void
 ct_offload_conn_notify_established(const struct ct_offload_ctx *ctx)
 {
+    bool pending;
+
+    ovs_mutex_lock(&ctx->conn->lock);
+    pending = ct_offload_conn_is_tracked(ctx->conn)
+              && !ct_offload_conn_is_hw_confirmed(ctx->conn);
+    ovs_mutex_unlock(&ctx->conn->lock);
+
+    if (!pending) {
+        return;
+    }
+
     struct ct_offload_op op = {
         .type = CT_OFFLOAD_OP_ESTABLISHED, .ctx = *ctx
     };
@@ -483,4 +517,77 @@ ct_offload_conn_is_hw_confirmed(const struct conn *conn)
         conn_private_get(conn, ct_offload_private_id);
 
     return data && data->state == CT_OFFLOAD_STATE_HW_CONFIRMED;
+}
+
+bool
+ct_offload_conn_extend(struct conn *conn, const struct ct_offload_op *op,
+                       long long now)
+    OVS_EXCLUDED(conn->lock)
+{
+    struct ct_offload_data *data;
+    long long new_exp;
+    bool extended = false;
+
+    if (op->error || !op->last_used
+        || ct_offload_private_id == CT_PRIVATE_ID_INVALID) {
+        return false;
+    }
+
+    ovs_mutex_lock(&conn->lock);
+    data = conn_private_get(conn, ct_offload_private_id);
+    if (data) {
+        long long base = data->last_extend_ts ? data->last_extend_ts : now;
+
+        if (op->last_used <= base) {
+            /* No hardware activity newer than what was already
+             * accounted for. */
+        } else {
+            data->last_extend_ts = op->last_used;
+
+            long long cur;
+            atomic_read_relaxed(&conn->expiration, &cur);
+            for (;;) {
+                new_exp = cur + (op->last_used - base);
+                if (new_exp <= now) {
+                    break;
+                }
+                if (atomic_compare_exchange_strong_relaxed(
+                        &conn->expiration, &cur, new_exp)) {
+                    extended = true;
+                    break;
+                }
+                /* The compare-exchange failed: 'cur' has been reloaded
+                 * with the current value (e.g. a PMD refreshed the
+                 * expiration for a packet); the deadline is recomputed
+                 * from it, so a concurrently written larger value is
+                 * never lost. */
+            }
+        }
+    }
+    ovs_mutex_unlock(&conn->lock);
+
+    return extended;
+}
+
+void
+ct_offload_conn_demote(struct conn *conn)
+{
+    struct ct_offload_data *data;
+
+    if (ct_offload_private_id == CT_PRIVATE_ID_INVALID) {
+        return;
+    }
+
+    ovs_mutex_lock(&conn->lock);
+    data = conn_private_get(conn, ct_offload_private_id);
+    if (data) {
+        conn_private_set(conn, ct_offload_private_id, NULL);
+    }
+    ovs_mutex_unlock(&conn->lock);
+
+    /* RCU-deferred: readers of the private slot hold conn->lock, so
+     * the postponement is belt-and-suspenders. */
+    ovsrcu_postpone(free, data);
+
+    VLOG_DBG("conn demoted to software tracking: conn=%p", conn);
 }
