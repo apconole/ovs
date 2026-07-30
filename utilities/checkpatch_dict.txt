@@ -1,3 +1,4 @@
+accessors
 acl
 addresssanitizer
 afxdp
@@ -49,6 +50,8 @@ defragment
 deref
 dereference
 dest
+destructor
+destructors
 detrace
 dhcp
 dhcpv4
@@ -268,6 +271,7 @@ stime
 strcasecmp
 strcmp
 struct
+submodule
 subnet
 subtable
 syscall
@@ -304,6 +308,7 @@ unixctl
 untrusted
 upcall
 upcalls
+urcu
 us
 usec
 userspace

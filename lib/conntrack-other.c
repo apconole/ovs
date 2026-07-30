@@ -79,6 +79,7 @@ other_new_conn(struct conntrack *ct, struct dp_packet *pkt OVS_UNUSED,
     conn->state = OTHERS_FIRST;
     conn->up.tp_id = tp_id;
 
+    conn_init(&conn->up);
     conn_init_expiration(ct, &conn->up, other_timeouts[conn->state], now);
 
     return &conn->up;

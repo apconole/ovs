@@ -91,6 +91,27 @@ struct nat_action_info_t {
     uint16_t nat_flags;
 };
 
+/* Private per-connection storage slots.
+ *
+ * Modules reserve a slot at initialization time to attach private data
+ * to every tracked connection.  The pointer is protected by conn->lock;
+ * the pointed-to data is the module's responsibility. */
+
+/* Maximum number of private storage slots available per connection. */
+#define CT_CONN_PRIVATE_MAX 8
+
+typedef uint32_t ct_private_id_t;
+
+/* Returned by conn_private_id_alloc() when no slots remain. */
+#define CT_PRIVATE_ID_INVALID UINT32_MAX
+
+/* Allocate a private storage slot.  'destructor' (may be NULL) is called
+ * with the stored pointer when a connection is freed; only invoked for
+ * non-NULL values.  Returns CT_PRIVATE_ID_INVALID on failure.  Must be
+ * called during single-threaded module initialization, before any
+ * connection carrying this slot is created. */
+ct_private_id_t conn_private_id_alloc(void (*destructor)(void *));
+
 struct conntrack *conntrack_init(void);
 void conntrack_destroy(struct conntrack *);
 
