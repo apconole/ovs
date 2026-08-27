@@ -296,3 +296,7 @@ AT_CLEANUP
 AT_SETUP([Conntrack Library - FTP ALG parsing])
 AT_CHECK([ovstest test-conntrack ftp-alg-large-payload])
 AT_CLEANUP
+
+AT_SETUP([Conntrack Library - FTP ALG guard])
+AT_CHECK([ovstest test-conntrack ftp-alg-no-tailroom], [0], [], [ignore])
+AT_CLEANUP

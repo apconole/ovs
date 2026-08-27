@@ -797,6 +797,7 @@ Tulio Ribeiro                   tribeiro@lasige.di.fc.ul.pt
 Tytus Kurek                     Tytus.Kurek@pega.com
 Valentin Bud                    valentin@hackaserver.com
 Vasiliy Tolstov                 v.tolstov@selfip.ru
+Vinícius Rodrigues              vinicius.marques.rodrigues@cern.ch
 Vinllen Chen                    cvinllen@gmail.com
 Vipul Ashri                     vipul.ashri@ericsson.com
 Vishal Swarankar                vishal.swarnkar@gmail.com

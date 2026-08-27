@@ -3294,12 +3294,12 @@ repl_ftp_v4_addr(struct dp_packet *pkt, ovs_be32 v4_addr_rep,
 
     /* Do conservative check for pathological MTU usage. */
     uint32_t orig_used_size = dp_packet_size(pkt);
-    if (orig_used_size + MAX_FTP_V4_NAT_DELTA >
-        dp_packet_get_allocated(pkt)) {
-
+    if (MAX_FTP_V4_NAT_DELTA > dp_packet_tailroom(pkt)) {
         static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 5);
-        VLOG_WARN_RL(&rl, "Unsupported effective MTU %u used with FTP V4",
-                     dp_packet_get_allocated(pkt));
+        VLOG_WARN_RL(&rl,
+                     "Oversized packet detected with FTPv4 (%"PRIuSIZE
+                     " vs. %"PRIu32")",
+                     dp_packet_tailroom(pkt), MAX_FTP_V4_NAT_DELTA);
         return 0;
     }
 
@@ -3674,12 +3674,12 @@ repl_ftp_v6_addr(struct dp_packet *pkt, union ct_addr v6_addr_rep,
 
     /* Do conservative check for pathological MTU usage. */
     uint32_t orig_used_size = dp_packet_size(pkt);
-    if (orig_used_size + MAX_FTP_V6_NAT_DELTA >
-        dp_packet_get_allocated(pkt)) {
-
+    if (MAX_FTP_V6_NAT_DELTA > dp_packet_tailroom(pkt)) {
         static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 5);
-        VLOG_WARN_RL(&rl, "Unsupported effective MTU %u used with FTP V6",
-                     dp_packet_get_allocated(pkt));
+        VLOG_WARN_RL(&rl,
+                     "Oversized packet detected with FTPv6 (%"PRIuSIZE
+                     " vs. %"PRIu32")",
+                     dp_packet_tailroom(pkt), MAX_FTP_V6_NAT_DELTA);
         return 0;
     }
 
