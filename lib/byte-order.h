@@ -20,6 +20,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <inttypes.h>
+#include <string.h>
 #include "openvswitch/types.h"
 
 #ifndef __CHECKER__
@@ -69,6 +70,39 @@ uint32_byteswap(uint32_t crc) {
             ((crc & 0x0000ff00) <<  8) |
             ((crc & 0x00ff0000) >>  8) |
             ((crc & 0xff000000) >> 24));
+}
+
+#ifdef __linux__
+#include <endian.h>
+#elif defined(__FreeBSD__)
+#include <sys/endian.h>
+#else
+static inline uint32_t
+htole32(uint32_t host_32bits)
+{
+    return htonl(1) == 1 ? uint32_byteswap(host_32bits) : host_32bits;
+}
+
+static inline uint32_t
+le32toh(uint32_t le_32bits)
+{
+    return htonl(1) == 1 ? uint32_byteswap(le_32bits) : le_32bits;
+}
+#endif
+
+static inline uint32_t
+ovs_load_le32(const uint8_t *p)
+{
+    uint32_t n;
+    memcpy(&n, p, sizeof n);
+    return le32toh(n);
+}
+
+static inline void
+ovs_store_le32(uint8_t *p, uint32_t v)
+{
+    uint32_t n = htole32(v);
+    memcpy(p, &n, sizeof n);
 }
 
 /* These macros may substitute for htons(), htonl(), and htonll() in contexts
