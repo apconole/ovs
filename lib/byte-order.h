@@ -20,6 +20,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <inttypes.h>
+#include <string.h>
 #include "openvswitch/types.h"
 
 #ifndef __CHECKER__
@@ -69,6 +70,53 @@ uint32_byteswap(uint32_t crc) {
             ((crc & 0x0000ff00) <<  8) |
             ((crc & 0x00ff0000) >>  8) |
             ((crc & 0xff000000) >> 24));
+}
+
+#if HAVE_ENDIAN_H
+#include <endian.h>
+#elif HAVE_SYS_ENDIAN_H
+#include <sys/endian.h>
+#endif
+
+#if HAVE_DECL_HTOLE32 && HAVE_DECL_LE32TOH
+static inline uint32_t
+ovs_htole32(uint32_t host_32bits)
+{
+    return htole32(host_32bits);
+}
+
+static inline uint32_t
+ovs_le32toh(uint32_t le_32bits)
+{
+    return le32toh(le_32bits);
+}
+#else
+static inline uint32_t
+ovs_htole32(uint32_t host_32bits)
+{
+    return htonl(1) == 1 ? uint32_byteswap(host_32bits) : host_32bits;
+}
+
+static inline uint32_t
+ovs_le32toh(uint32_t le_32bits)
+{
+    return htonl(1) == 1 ? uint32_byteswap(le_32bits) : le_32bits;
+}
+#endif
+
+static inline uint32_t
+ovs_load_le32(const uint8_t *p)
+{
+    uint32_t n;
+    memcpy(&n, p, sizeof n);
+    return ovs_le32toh(n);
+}
+
+static inline void
+ovs_store_le32(uint8_t *p, uint32_t v)
+{
+    uint32_t n = ovs_htole32(v);
+    memcpy(p, &n, sizeof n);
 }
 
 /* These macros may substitute for htons(), htonl(), and htonll() in contexts

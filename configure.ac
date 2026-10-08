@@ -117,6 +117,13 @@ AC_CHECK_HEADERS([mntent.h sys/statvfs.h linux/types.h linux/if_ether.h])
 AC_CHECK_HEADERS([linux/net_namespace.h stdatomic.h bits/floatn-common.h])
 AC_CHECK_HEADERS([net/if_mib.h], [], [], [[#include <sys/types.h>
 #include <net/if.h>]])
+AC_CHECK_HEADERS([endian.h sys/endian.h])
+AC_CHECK_DECLS([htole32, le32toh], [], [], [[#if HAVE_ENDIAN_H
+#include <endian.h>
+#endif
+#if HAVE_SYS_ENDIAN_H
+#include <sys/endian.h>
+#endif]])
 
 OVS_CHECK_PKIDIR
 OVS_CHECK_RUNDIR
