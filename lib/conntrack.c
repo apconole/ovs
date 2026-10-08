@@ -55,6 +55,17 @@ COVERAGE_DEFINE(conntrack_l4csum_err);
 COVERAGE_DEFINE(conntrack_lookup_natted_miss);
 COVERAGE_DEFINE(conntrack_zone_full);
 
+/* NAT tuple selection (both the address/port hash basis and the
+ * fully-random port paths) must not be predictable from an observed
+ * random_uint32() output, so it must draw from a cryptographic
+ * source here instead of the general-purpose xorshift32 PRNG in
+ * random.c. */
+static uint32_t
+nat_random_uint32(void)
+{
+    return cs_random_uint32();
+}
+
 struct conn_lookup_ctx {
     struct conn_key key;
     struct conn *conn;
@@ -252,7 +263,7 @@ conntrack_init(void)
     /* This value can be used during init (e.g. timeout_policy_init()),
      * set it first to ensure it is available.
      */
-    ct->hash_basis = random_uint32();
+    ct->hash_basis = nat_random_uint32();
 
     ovs_rwlock_init(&ct->resources_lock);
     ovs_rwlock_wrlock(&ct->resources_lock);
@@ -2557,7 +2568,7 @@ another_round:
 
     if (attempts < range && attempts >= 16) {
         attempts /= 2;
-        curr = min + (random_uint32() % range);
+        curr = min + (nat_random_uint32() % range);
         goto another_round;
     }
 
@@ -2613,7 +2624,7 @@ nat_get_unique_tuple(struct conntrack *ct, struct conn *conn,
     hash = nat_range_hash(fwd_key, basis, nat_info);
 
     if (nat_info->nat_flags & NAT_RANGE_RANDOM) {
-        port_off = random_uint32();
+        port_off = nat_random_uint32();
     } else if (basis) {
         port_off = hash;
     } else {
