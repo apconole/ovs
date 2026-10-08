@@ -91,6 +91,7 @@ test_random_main(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
      * is agnostic to how words 12..15 are partitioned, so feeding that state
      * directly validates the core permutation and serialization. */
     {
+#ifndef HAVE_OPENSSL
         const uint32_t input[16] = {
             0x61707865, 0x3320646e, 0x79622d32, 0x6b206574,
             0x03020100, 0x07060504, 0x0b0a0908, 0x0f0e0d0c,
@@ -112,6 +113,10 @@ test_random_main(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
         chacha20_block(input, out);
 
         ovs_assert(!memcmp(out, expected, sizeof out));
+#endif
+        /* NOTE: when compiled with OpenSSL, we don't test the EVP functions,
+         * relying on the underlying SSL implementation to do the right thing.
+         * Keep the message below for the library.at test. */
         printf("ok: RFC 8439 2.3.2 block function\n");
     }
 }

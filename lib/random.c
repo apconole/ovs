@@ -21,12 +21,19 @@
 #include <stdlib.h>
 #include <sys/time.h>
 
+#ifdef HAVE_OPENSSL
+#include <openssl/evp.h>
+#endif
+
 #include "byte-order.h"
 #include "entropy.h"
 #include "hash.h"
 #include "ovs-thread.h"
 #include "timeval.h"
 #include "util.h"
+#include "openvswitch/vlog.h"
+
+VLOG_DEFINE_THIS_MODULE(random);
 
 /* This is the 32-bit PRNG recommended in G. Marsaglia, "Xorshift RNGs",
  * _Journal of Statistical Software_ 8:14 (July 2003).  According to the paper,
@@ -120,6 +127,31 @@ random_next(void)
 }
 
 
+/* Cryptographic Secure Psuedo-Random Number Generator */
+
+/* Refill a page worth of keystream at a time to amortize the block cost. */
+#define CSPRNG_BUFSZ    4096
+
+#define CHACHA_KEYLEN   32          /* 256-bit key. */
+
+/* Reseed from the OS entropy pool after this many bytes served, matching
+ * the arc4random policy of periodic reseeding. */
+#define CSPRNG_RESEED   (1600 * 1024)
+
+struct csprng {
+#ifndef HAVE_OPENSSL
+    uint32_t state[16];             /* ChaCha20 state:
+                                     * constant|key|counter|nonce. */
+#else
+    EVP_CIPHER_CTX *state;          /* EVP instance for OpenSSL. */
+#endif
+    uint8_t buf[CSPRNG_BUFSZ];      /* Buffered keystream. */
+    size_t pos;                     /* Next unused byte in 'buf'. */
+    size_t served;                  /* Bytes served since last reseed. */
+    int initialized;
+};
+
+#ifndef HAVE_OPENSSL
 /* This is the 32-bit CSPRNG adapted from the ChaCha20 algorithm from
  * arc4random(3) and from the Linux kernel's get_random_u32().
  *
@@ -129,14 +161,6 @@ random_next(void)
  */
 
 #define CHACHA_ROUNDS   20
-#define CHACHA_KEYLEN   32          /* 256-bit key. */
-
-/* Refill a page worth of keystream at a time to amortize the block cost. */
-#define CSPRNG_BUFSZ    4096
-
-/* Reseed from the OS entropy pool after this many bytes served, matching
- * the arc4random policy of periodic reseeding. */
-#define CSPRNG_RESEED   (1600 * 1024)
 
 #define ROTL32(v, n)    (((v) << (n)) | ((v) >> (32 - (n))))
 
@@ -145,15 +169,6 @@ random_next(void)
     c += d; b ^= c; b = ROTL32(b, 12);          \
     a += b; d ^= a; d = ROTL32(d, 8);           \
     c += d; b ^= c; b = ROTL32(b, 7)
-
-struct csprng {
-    uint32_t state[16];             /* ChaCha20 state:
-                                     * constant|key|counter|nonce. */
-    uint8_t buf[CSPRNG_BUFSZ];      /* Buffered keystream. */
-    size_t pos;                     /* Next unused byte in 'buf'. */
-    size_t served;                  /* Bytes served since last reseed. */
-    int initialized;
-};
 
 /* ChaCha20 constant: "expand 32-byte k". */
 static const uint8_t chacha_sigma[CHACHA_K_INPUT + 1] = "expand 32-byte k";
@@ -242,6 +257,84 @@ csprng_refill(struct csprng *c)
     memset(c->buf, 0, CHACHA_KEYLEN);
     c->pos = CHACHA_KEYLEN;
 }
+#else
+/* This is the EVP based CSPRNG using the OpenSSL EVP framework to create a
+ * long stream of bytes, and pull those.  The OpenSSL EVP manages the
+ * underlying bytes, all this does is manage the policy.
+ */
+
+static void
+csprng_state_destroy(void *ctx)
+{
+    struct csprng *csp = (struct csprng *) ctx;
+    if (csp->state) {
+        EVP_CIPHER_CTX_free(csp->state);
+        csp->state = 0;
+    }
+
+    free(csp);
+}
+
+static struct csprng *
+cs_state_get(void)
+{
+    static struct ovsthread_once once = OVSTHREAD_ONCE_INITIALIZER;
+    static ovsthread_key_t cskey;
+
+    struct csprng *csp;
+
+    if (ovsthread_once_start(&once)) {
+        ovsthread_key_create(&cskey, csprng_state_destroy);
+        ovsthread_once_done(&once);
+    }
+
+    csp = ovsthread_getspecific(cskey);
+    if (!csp) {
+        csp = xzalloc(sizeof *csp);
+        csp->state = EVP_CIPHER_CTX_new();
+        if (!csp->state) {
+            VLOG_FATAL("cs_random: Cipher creation error.");
+        }
+        ovsthread_setspecific(cskey, csp);
+    }
+    return csp;
+}
+
+static void
+csprng_seed(struct csprng *c)
+{
+    uint8_t key[CHACHA_KEYLEN];
+    uint8_t iv[CHACHA_K_INPUT];
+
+    get_entropy_or_die(key, sizeof key);
+    get_entropy_or_die(iv, sizeof iv);
+
+    if (EVP_EncryptInit_ex(c->state, EVP_chacha20(), NULL, key, iv) != 1) {
+        VLOG_FATAL("cs_random: EVP reseed failure.");
+    }
+
+    memset(key, 0, sizeof key);
+    memset(iv, 0, sizeof iv);
+
+    c->pos = sizeof c->buf;
+    c->served = 0;
+    c->initialized = 1;
+}
+
+static void
+csprng_refill(struct csprng *c)
+{
+    static const uint8_t zero[4096];
+    int outl;
+
+    if (EVP_EncryptUpdate(c->state, c->buf, &outl, zero, sizeof c->buf) != 1 ||
+        outl != sizeof c->buf) {
+        VLOG_FATAL("cs_random: EVP fill failure.");
+    }
+
+    c->pos = 0;
+}
+#endif
 
 uint32_t
 cs_random_uint32(void)
