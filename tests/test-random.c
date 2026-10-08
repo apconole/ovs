@@ -17,9 +17,18 @@
 #include <config.h>
 #undef NDEBUG
 #include "random.h"
+#include <assert.h>
 #include <stdio.h>
 #include <string.h>
+#include "timeval.h"
 #include "ovstest.h"
+
+static double
+elapsed_sec(const struct timeval *start, const struct timeval *end)
+{
+    return (end->tv_sec - start->tv_sec)
+           + (end->tv_usec - start->tv_usec) / 1000000.0;
+}
 
 static void
 test_random_main(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
@@ -74,6 +83,64 @@ test_random_main(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
         printf("\n");
     }
     printf("(expected values are %d)\n", N_ROUNDS / 16);
+
+    /* Now for ChaCha20 test. */
+    /* RFC 8439 section 2.3.2: the ChaCha20 block function.  Key = 00..1f,
+     * block counter = 1, nonce = 00:00:00:09 00:00:00:4a 00:00:00:00.  Note
+     * this is the RFC's 32-bit-counter/96-bit-nonce layout; chacha20_block()
+     * is agnostic to how words 12..15 are partitioned, so feeding that state
+     * directly validates the core permutation and serialization. */
+    {
+        const uint32_t input[16] = {
+            0x61707865, 0x3320646e, 0x79622d32, 0x6b206574,
+            0x03020100, 0x07060504, 0x0b0a0908, 0x0f0e0d0c,
+            0x13121110, 0x17161514, 0x1b1a1918, 0x1f1e1d1c,
+            0x00000001, 0x09000000, 0x4a000000, 0x00000000,
+        };
+        static const uint8_t expected[64] = {
+            0x10, 0xf1, 0xe7, 0xe4, 0xd1, 0x3b, 0x59, 0x15,
+            0x50, 0x0f, 0xdd, 0x1f, 0xa3, 0x20, 0x71, 0xc4,
+            0xc7, 0xd1, 0xf4, 0xc7, 0x33, 0xc0, 0x68, 0x03,
+            0x04, 0x22, 0xaa, 0x9a, 0xc3, 0xd4, 0x6c, 0x4e,
+            0xd2, 0x82, 0x64, 0x46, 0x07, 0x9f, 0xaa, 0x09,
+            0x14, 0xc2, 0xd7, 0x05, 0xd9, 0x8b, 0x02, 0xa2,
+            0xb5, 0x12, 0x9c, 0xd1, 0xde, 0x16, 0x4e, 0xb9,
+            0xcb, 0xd0, 0x83, 0xe8, 0xa2, 0x50, 0x3c, 0x4e,
+        };
+        uint8_t out[64];
+
+        chacha20_block(input, out);
+
+        ovs_assert(!memcmp(out, expected, sizeof out));
+        printf("ok: RFC 8439 2.3.2 block function\n");
+    }
+}
+
+static void
+test_bench_random(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
+{
+    enum { N_ROUNDS = 10000 };
+    struct timeval start, end;
+    uint32_t x = 0;
+    int i;
+
+    /* Benchmark the CSPRNG and PRNG performance. */
+    xgettimeofday(&start);
+    for (i = 0; i < N_ROUNDS * N_ROUNDS; i++) {
+        x += random_uint32();
+    }
+    xgettimeofday(&end);
+    printf("random_uint32: %f seconds\n", elapsed_sec(&start, &end));
+
+    xgettimeofday(&start);
+    for (i = 0; i < N_ROUNDS * N_ROUNDS; i++) {
+        x += cs_random_uint32();
+    }
+    xgettimeofday(&end);
+    printf("cs_random_uint32: %f seconds\n", elapsed_sec(&start, &end));
+    printf("accumulator: %u\n", x); /* NOTE: Keep this to prevent compiler
+                                     * from optimizing out the calls above. */
 }
 
 OVSTEST_REGISTER("test-random", test_random_main);
+OVSTEST_REGISTER("test-bench-random", test_bench_random);

@@ -45,4 +45,13 @@ random_uint16(void)
     return random_uint32();
 }
 
+#define CHACHA_K_INPUT  16          /* ChaCha20 inblock size in bytes. */
+#define CHACHA_BLOCK    64          /* ChaCha20 block size in bytes. */
+
+/* Used by the internal CSPRNG and by the block selftest. */
+void chacha20_block(const uint32_t input[CHACHA_K_INPUT],
+                    uint8_t out[CHACHA_BLOCK]);
+
+uint32_t cs_random_uint32(void);
+
 #endif /* random.h */
