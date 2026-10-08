@@ -201,6 +201,11 @@ nullable_memset(void *dst, int c, size_t n)
     }
 }
 
+/* Zeroes 'size' bytes of memory at 'ptr'.  Unlike memset(), the compiler is
+ * not allowed to optimize this away, so it may be used to scrub sensitive
+ * data, such as keying material, from memory. */
+void ovs_memzero(void *ptr, size_t size);
+
 /* Copy string SRC to DST, but no more bytes than the shorter of DST or SRC.
  * DST and SRC must both be char arrays, not pointers, and with GNU C, this
  * raises a compiler error if either DST or SRC is a pointer instead of an
