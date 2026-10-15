@@ -45,6 +45,7 @@ enum dpif_offload_impl_type {
 void dpif_offload_set_global_cfg(const struct ovsrec_open_vswitch *);
 bool dpif_offload_enabled(void);
 bool dpif_offload_rebalance_policy_enabled(void);
+bool dpif_offload_class_is_registered(const char *name);
 
 
 /* Per dpif specific functions. */

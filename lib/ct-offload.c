@@ -20,14 +20,26 @@
 
 #include <errno.h>
 
+#include "conntrack.h"
+#include "conntrack-private.h"
+#include "dpif-offload.h"
 #include "ovs-thread.h"
 #include "timeval.h"
 #include "util.h"
+#include "vswitch-idl.h"
 
 #include "openvswitch/list.h"
 #include "openvswitch/vlog.h"
 
 VLOG_DEFINE_THIS_MODULE(ct_offload);
+
+/* Built-in CT offload provider classes.  Only those whose name matches a
+ * registered dpif offload class are activated by ct_offload_module_init(),
+ * tying CT offload to the active hardware offload provider.  Populated as
+ * concrete providers are added in later patches. */
+static const struct ct_offload_class *base_ct_offload_classes[]
+    OVS_UNUSED = {
+};
 
 /* Private slot for storing per-connection offload state.  Allocated when
  * the first provider class is registered, which must happen before any
@@ -234,12 +246,57 @@ out:
 
 /* ct_offload_module_init() - register built-in CT offload providers.
  *
- * Must be called once before any connections are created. */
+ * Only registers providers whose name matches a currently-registered dpif
+ * offload class, so CT offload is automatically tied to the active
+ * hardware offload provider.  Safe to call multiple times; subsequent
+ * calls are no-ops (duplicate registration is detected and skipped). */
 void
 ct_offload_module_init(void)
 {
-    /* No built-in providers yet; third parties call ct_offload_register()
-     * directly from their own module-init routines. */
+    size_t n_classes = ARRAY_SIZE(base_ct_offload_classes);
+
+    for (size_t i = 0; i < n_classes; i++) {
+        const struct ct_offload_class *class = base_ct_offload_classes[i];
+
+        if (!dpif_offload_class_is_registered(class->name)) {
+            continue;
+        }
+
+        int error = ct_offload_register(class);
+        if (error && error != EEXIST) {
+            VLOG_WARN("failed to register ct offload class %s: %s",
+                      class->name, ovs_strerror(error));
+        }
+    }
+}
+
+/* ct_offload_enabled() - returns true when hardware offload is active.
+ *
+ * Delegates to dpif_offload_enabled() so CT offload shares the same global
+ * enable/disable knob as datapath hardware offload. */
+bool
+ct_offload_enabled(void)
+{
+    return dpif_offload_enabled();
+}
+
+/* ct_offload_set_global_cfg() - configure CT offload from OVSDB.
+ *
+ * Called internally by dpif_offload_set_global_cfg() once hardware offload
+ * has been enabled and the appropriate dpif offload classes are known. */
+void
+ct_offload_set_global_cfg(const struct ovsrec_open_vswitch *cfg OVS_UNUSED)
+{
+    static struct ovsthread_once once = OVSTHREAD_ONCE_INITIALIZER;
+
+    if (!dpif_offload_enabled()) {
+        return;
+    }
+
+    if (ovsthread_once_start(&once)) {
+        ct_offload_module_init();
+        ovsthread_once_done(&once);
+    }
 }
 
 /* ct_offload_op_batch_add() - append one operation to 'batch'.
