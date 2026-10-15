@@ -192,8 +192,21 @@ void ct_offload_unregister(const struct ct_offload_class *);
 int  ct_offload_open(const char *name);
 void ct_offload_close(const char *name);
 
-/* Module initialization (register built-in providers). */
+/* Module initialization (register built-in providers).  Must run before
+ * any connections are created, as it allocates the per-connection private
+ * slot used to track offload state. */
 void ct_offload_module_init(void);
+
+/* Offload state of a connection, tracked by the framework in a
+ * conn-private slot and updated from ct_offload_op_batch_submit():
+ * CT_OFFLOAD_STATE_NONE (never offloaded or removed), _ADDED (a provider
+ * accepted the ADD op; hardware flow may not be installed yet), or _EST
+ * (a provider confirmed establishment in hardware).
+ *
+ * Both helpers require conn->lock and tolerate providers never having
+ * been registered. */
+bool ct_offload_conn_is_tracked(const struct conn *);
+bool ct_offload_conn_is_established(const struct conn *);
 
 /* Single-operation convenience wrappers around ct_offload_op_batch_*(),
  * each submitting a batch of one op to every open provider.

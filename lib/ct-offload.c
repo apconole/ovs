@@ -28,6 +28,16 @@
 
 VLOG_DEFINE_THIS_MODULE(ct_offload);
 
+/* Private slot for storing per-connection offload state.  Allocated when
+ * the first provider class is registered, which must happen before any
+ * connections are created. */
+static ct_private_id_t ct_offload_private_id = CT_PRIVATE_ID_INVALID;
+
+/* Values stored in the private slot. */
+#define CT_OFFLOAD_STATE_NONE  ((void *)(uintptr_t) 0)  /* Not offloaded. */
+#define CT_OFFLOAD_STATE_ADDED ((void *)(uintptr_t) 1)  /* Offload pending. */
+#define CT_OFFLOAD_STATE_EST   ((void *)(uintptr_t) 2)  /* Established. */
+
 /* Node in the registered-provider list. */
 struct ct_offload_class_node {
     const struct ct_offload_class *class;
@@ -89,6 +99,14 @@ ct_offload_register(const struct ct_offload_class *class)
                   class->name);
         error = EEXIST;
         goto out;
+    }
+
+    /* The private slot must exist before any connections are created;
+     * registration is documented to happen that early, so allocate on
+     * first use.  The stored state is a tagged value, not allocated
+     * memory, so no destructor is required. */
+    if (ct_offload_private_id == CT_PRIVATE_ID_INVALID) {
+        ct_offload_private_id = conn_private_id_alloc(NULL);
     }
 
     error = class->init ? class->init() : 0;
@@ -234,13 +252,58 @@ ct_offload_op_batch_add(struct ct_offload_op_batch *batch,
     op->last_used = 0;
 }
 
+/* Updates the per-connection offload state from the results of 'op'.
+ * Called with ct_offload_rwlock released, taking conn->lock by itself. */
+static void
+ct_offload_op_mark(struct ct_offload_op *op)
+{
+    struct conn *conn = op->ctx.conn;
+    void *state;
+
+    if (ct_offload_private_id == CT_PRIVATE_ID_INVALID) {
+        return;
+    }
+
+    ovs_mutex_lock(&conn->lock);
+    state = conn_private_get(conn, ct_offload_private_id);
+
+    switch (op->type) {
+    case CT_OFFLOAD_OP_ADD:
+        if (!op->error && state == CT_OFFLOAD_STATE_NONE) {
+            conn_private_set(conn, ct_offload_private_id,
+                             CT_OFFLOAD_STATE_ADDED);
+        }
+        break;
+    case CT_OFFLOAD_OP_EST:
+        if (!op->error && state == CT_OFFLOAD_STATE_ADDED) {
+            conn_private_set(conn, ct_offload_private_id,
+                             CT_OFFLOAD_STATE_EST);
+        }
+        break;
+    case CT_OFFLOAD_OP_DEL:
+        conn_private_set(conn, ct_offload_private_id, CT_OFFLOAD_STATE_NONE);
+        break;
+    case CT_OFFLOAD_OP_UPD:
+        break;
+    }
+    ovs_mutex_unlock(&conn->lock);
+}
+
 /* ct_offload_op_batch_submit() - submit 'batch' to every open provider.
  *
  * Each provider's batch_submit() callback runs with only the read side of
  * ct_offload_rwlock held, in registration order, and fills in the op
  * result fields as documented with enum ct_offload_op_type.  When more
  * than one provider is open, later providers may overwrite the results of
- * earlier ones; see the notes in ct-offload.h. */
+ * earlier ones; see the notes in ct-offload.h.
+ *
+ * After all providers have run, the per-connection offload state is
+ * updated from the op results (ADD accepted -> ADDED, EST accepted ->
+ * EST, DEL -> NONE).  This happens with ct_offload_rwlock released to
+ * keep the lock order strict: ct_offload_rwlock always nests outside
+ * conn->lock, so code must never call into ct-offload with conn->lock
+ * held.  Providers that need conn state inside batch_submit() follow the
+ * same order and take conn->lock themselves. */
 void
 ct_offload_op_batch_submit(struct ct_offload_op_batch *batch)
 {
@@ -254,6 +317,10 @@ ct_offload_op_batch_submit(struct ct_offload_op_batch *batch)
         node->class->batch_submit(batch);
     }
     ovs_rwlock_unlock(&ct_offload_rwlock);
+
+    for (size_t i = 0; i < batch->n_ops; i++) {
+        ct_offload_op_mark(&batch->ops[i]);
+    }
 }
 
 /* ct_offload_conn_add() - submit an ADD op for 'ctx' to every open
@@ -353,4 +420,35 @@ ct_offload_might_offload(const struct ct_offload_ctx *ctx)
     ovs_rwlock_unlock(&ct_offload_rwlock);
 
     return result;
+}
+
+/* ct_offload_conn_is_tracked() - returns true if a provider accepted the
+ * connection (state ADDED or EST).  Note that this does not mean hardware
+ * has confirmed the connection; use ct_offload_conn_is_established() for
+ * that. */
+bool
+ct_offload_conn_is_tracked(const struct conn *conn)
+    OVS_REQUIRES(conn->lock)
+{
+    if (ct_offload_private_id == CT_PRIVATE_ID_INVALID) {
+        return false;
+    }
+
+    void *state = conn_private_get(conn, ct_offload_private_id);
+
+    return state == CT_OFFLOAD_STATE_ADDED || state == CT_OFFLOAD_STATE_EST;
+}
+
+/* ct_offload_conn_is_established() - returns true if a provider confirmed
+ * the connection established in hardware (state EST). */
+bool
+ct_offload_conn_is_established(const struct conn *conn)
+    OVS_REQUIRES(conn->lock)
+{
+    if (ct_offload_private_id == CT_PRIVATE_ID_INVALID) {
+        return false;
+    }
+
+    return conn_private_get(conn, ct_offload_private_id)
+           == CT_OFFLOAD_STATE_EST;
 }
