@@ -207,6 +207,10 @@ void ct_offload_close(const char *name);
  * slot used to track offload state. */
 void ct_offload_module_init(void);
 
+/* Returns true when CT offload is enabled (delegates to
+ * dpif_offload_enabled()). */
+bool ct_offload_enabled(void);
+
 /* Offload state of a connection, tracked in a conn-private slot:
  * tracked (a provider accepted the ADD op) or hw-confirmed (a provider
  * acknowledged the entry in hardware).  Both require conn->lock. */

@@ -1382,7 +1382,7 @@ process_one(struct conntrack *ct, struct dp_packet *pkt,
         }
         ovs_mutex_unlock(&ct->ct_lock);
 
-        if (conn) {
+        if (ct_offload_enabled() && conn) {
             struct ct_offload_ctx offload_ctx = {
                 .conn          = conn,
                 .netdev_in     = NULL,
@@ -1393,7 +1393,7 @@ process_one(struct conntrack *ct, struct dp_packet *pkt,
         }
     }
 
-    if (!create_new_conn && conn && ctx->reply &&
+    if (ct_offload_enabled() && !create_new_conn && conn && ctx->reply &&
         (pkt->md.ct_state & CS_ESTABLISHED)) {
         /* EST notify: the reply packet carries the reverse-direction
          * input port. */

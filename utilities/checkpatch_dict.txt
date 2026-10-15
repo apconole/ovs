@@ -308,6 +308,7 @@ ukey
 umask
 unassociated
 unclosed
+ungated
 unicast
 unixctl
 unregister
