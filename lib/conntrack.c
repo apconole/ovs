@@ -1317,7 +1317,7 @@ process_one(struct conntrack *ct, struct dp_packet *pkt,
             bool force, bool commit, long long now, const uint32_t *setmark,
             const struct ovs_key_ct_labels *setlabel,
             const struct nat_action_info_t *nat_action_info,
-            const char *helper, uint32_t tp_id)
+            const char *helper, uint32_t tp_id, struct netdev *in_netdev)
 {
     /* Reset ct_state whenever entering a new zone. */
     if (pkt->md.ct_state && pkt->md.ct_zone != zone) {
@@ -1392,7 +1392,7 @@ process_one(struct conntrack *ct, struct dp_packet *pkt,
         if (ct_offload_enabled() && conn) {
             struct ct_offload_ctx offload_ctx = {
                 .conn          = conn,
-                .netdev_in     = NULL,
+                .netdev_in     = in_netdev,
                 .input_port_id = pkt->md.orig_in_port,
                 .dir           = CT_DIR_FWD,
             };
@@ -1408,7 +1408,7 @@ process_one(struct conntrack *ct, struct dp_packet *pkt,
          * reverse direction port. */
         struct ct_offload_ctx offload_ctx = {
             .conn          = conn,
-            .netdev_in     = NULL,
+            .netdev_in     = in_netdev,
             .input_port_id = pkt->md.orig_in_port,
             .dir           = CT_DIR_FWD,
         };
@@ -1446,7 +1446,7 @@ conntrack_execute(struct conntrack *ct, struct dp_packet_batch *pkt_batch,
                   const struct ovs_key_ct_labels *setlabel,
                   const char *helper,
                   const struct nat_action_info_t *nat_action_info,
-                  long long now, uint32_t tp_id)
+                  long long now, uint32_t tp_id, struct netdev *in_netdev)
 {
     odp_port_t in_port = ODPP_LOCAL;
     struct conn_lookup_ctx ctx;
@@ -1483,7 +1483,7 @@ conntrack_execute(struct conntrack *ct, struct dp_packet_batch *pkt_batch,
             write_ct_md(packet, zone, NULL, NULL, NULL);
         } else {
             process_one(ct, packet, &ctx, zone, force, commit, now, setmark,
-                        setlabel, nat_action_info, helper, tp_id);
+                        setlabel, nat_action_info, helper, tp_id, in_netdev);
         }
     }
 

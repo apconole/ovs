@@ -163,6 +163,8 @@ typedef uint32_t ct_private_id_t;
  * slot is created. */
 ct_private_id_t conn_private_id_alloc(void (*destructor)(void *));
 
+struct netdev;
+
 struct conntrack *conntrack_init(void);
 void conntrack_destroy(struct conntrack *);
 
@@ -172,7 +174,8 @@ int conntrack_execute(struct conntrack *ct, struct dp_packet_batch *pkt_batch,
                       const struct ovs_key_ct_labels *setlabel,
                       const char *helper,
                       const struct nat_action_info_t *nat_action_info,
-                      long long now, uint32_t tp_id);
+                      long long now, uint32_t tp_id,
+                      struct netdev *in_netdev);
 void conntrack_clear(struct dp_packet *packet);
 
 struct conntrack_dump {
