@@ -8378,9 +8378,28 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
             VLOG_WARN_RL(&rl, "NAT specified without commit.");
         }
 
+        /* Resolve the input netdev via the per-PMD caches, like the
+         * output action: a direct dp_netdev_lookup_port() would race
+         * hmap_expand() on port addition.  NULL when unknown to this
+         * PMD; offload providers tolerate it. */
+        struct netdev *in_netdev = NULL;
+        if (!dp_packet_batch_is_empty(packets_)) {
+            odp_port_t query_port =
+                packets_->packets[0]->md.orig_in_port;
+            struct tx_port *tx =
+                pmd_send_port_cache_lookup(pmd, query_port);
+            if (!tx) {
+                tx = pmd_tnl_port_cache_lookup(pmd, query_port);
+            }
+            if (tx) {
+                in_netdev = tx->port->netdev;
+            }
+        }
+
         conntrack_execute(dp->conntrack, packets_, aux->flow->dl_type, force,
                           commit, zone, setmark, setlabel, helper,
-                          nat_action_info_ref, pmd->ctx.now / 1000, tp_id);
+                          nat_action_info_ref, pmd->ctx.now / 1000, tp_id,
+                          in_netdev);
         break;
     }
 
