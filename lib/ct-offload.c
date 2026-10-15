@@ -20,13 +20,37 @@
 
 #include <errno.h>
 
+#include "conntrack-private.h"
 #include "ovs-thread.h"
+#include "timeval.h"
 #include "util.h"
 
 #include "openvswitch/list.h"
 #include "openvswitch/vlog.h"
 
 VLOG_DEFINE_THIS_MODULE(ct_offload);
+
+/* Private slot for storing per-connection offload state.  Allocated when
+ * the first provider class is registered, which must happen before any
+ * connections are created. */
+static ct_private_id_t ct_offload_private_id = CT_PRIVATE_ID_INVALID;
+
+enum ct_offload_state {
+    CT_OFFLOAD_STATE_NONE,          /* Not offloaded. */
+    CT_OFFLOAD_STATE_ADDED,         /* Offload pending. */
+    CT_OFFLOAD_STATE_HW_CONFIRMED   /* Provider acknowledged the entry. */
+};
+
+/* Per-connection offload data stored in the private slot; NULL (the
+ * initial slot value) means never offloaded.  All members are written
+ * under conn->lock; last_extend_ts is written at hw-confirmation time
+ * (by PMD threads) and by the expiration sweeper, both under
+ * conn->lock. */
+struct ct_offload_data {
+    enum ct_offload_state state;
+    long long last_extend_ts;       /* Last hardware timestamp used to
+                                     * extend the connection's expiration. */
+};
 
 /* Node in the registered-provider list. */
 struct ct_offload_class_node {
@@ -88,6 +112,11 @@ ct_offload_register(const struct ct_offload_class *class)
                   class->name);
         error = EEXIST;
         goto out;
+    }
+
+    /* Must be allocated before any connections exist. */
+    if (ct_offload_private_id == CT_PRIVATE_ID_INVALID) {
+        ct_offload_private_id = conn_private_id_alloc(free);
     }
 
     error = class->init ? class->init() : 0;
@@ -243,11 +272,75 @@ ct_offload_op_batch_add(struct ct_offload_op_batch *batch,
     op->last_used = 0;
 }
 
+/* Marks the connection hw-confirmed.  last_extend_ts is stored before
+ * the state so that observing HW_CONFIRMED implies it is set. */
+static void
+ct_offload_data_hw_confirm(struct ct_offload_data *data)
+{
+    if (data->state != CT_OFFLOAD_STATE_HW_CONFIRMED) {
+        data->last_extend_ts = time_msec();
+        data->state = CT_OFFLOAD_STATE_HW_CONFIRMED;
+    }
+}
+
+/* Updates the per-connection offload state from the results of 'op'.
+ * Called with ct_offload_rwlock released, taking conn->lock by itself. */
+static void
+ct_offload_op_mark(struct ct_offload_op *op)
+{
+    struct conn *conn = op->ctx.conn;
+    struct ct_offload_data *data;
+
+    if (ct_offload_private_id == CT_PRIVATE_ID_INVALID) {
+        return;
+    }
+
+    ovs_mutex_lock(&conn->lock);
+    data = conn_private_get(conn, ct_offload_private_id);
+
+    switch (op->type) {
+    case CT_OFFLOAD_OP_ADD:
+        if (!op->error && !data) {
+            data = xzalloc(sizeof *data);
+            data->state = CT_OFFLOAD_STATE_ADDED;
+            conn_private_set(conn, ct_offload_private_id, data);
+        }
+        if (data && op->hw_confirmed) {
+            ct_offload_data_hw_confirm(data);
+        }
+        break;
+    case CT_OFFLOAD_OP_ESTABLISHED:
+    case CT_OFFLOAD_OP_UPD:
+        if (data && op->hw_confirmed) {
+            ct_offload_data_hw_confirm(data);
+        }
+        break;
+    case CT_OFFLOAD_OP_DEL:
+        if (op->error && op->error != ENOENT && op->error != EOPNOTSUPP) {
+            static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 10);
+
+            VLOG_WARN_RL(&rl, "ct offload provider failed to delete "
+                         "connection: %s", ovs_strerror(op->error));
+        }
+        conn_private_set(conn, ct_offload_private_id, NULL);
+        /* RCU-deferred: readers of the private slot hold conn->lock, so
+         * the postponement is belt-and-suspenders. */
+        ovsrcu_postpone(free, data);
+        break;
+    }
+    ovs_mutex_unlock(&conn->lock);
+}
+
 /* ct_offload_op_batch_submit() - submit 'batch' to every open provider.
  *
  * Result fields are pre-filled (EOPNOTSUPP = "no provider claimed this
  * op"); providers must leave them untouched when not handling a
- * connection (see ct-offload.h). */
+ * connection (see ct-offload.h).  After the providers run, the
+ * per-connection state is updated from the op results, with
+ * ct_offload_rwlock released to keep the lock order strict:
+ * ct_offload_rwlock always nests outside conn->lock, so code must
+ * never call into ct-offload with conn->lock held.  Providers needing
+ * conn state inside batch_submit() take conn->lock themselves. */
 void
 ct_offload_op_batch_submit(struct ct_offload_op_batch *batch)
 {
@@ -257,6 +350,7 @@ ct_offload_op_batch_submit(struct ct_offload_op_batch *batch)
     for (size_t i = 0; i < batch->n_ops; i++) {
         batch->ops[i].error = EOPNOTSUPP;
         batch->ops[i].last_used = 0;
+        batch->ops[i].hw_confirmed = false;
     }
 
     ovs_rwlock_rdlock(&ct_offload_rwlock);
@@ -267,6 +361,10 @@ ct_offload_op_batch_submit(struct ct_offload_op_batch *batch)
         node->class->batch_submit(batch);
     }
     ovs_rwlock_unlock(&ct_offload_rwlock);
+
+    for (size_t i = 0; i < batch->n_ops; i++) {
+        ct_offload_op_mark(&batch->ops[i]);
+    }
 }
 
 void
@@ -310,7 +408,8 @@ ct_offload_conn_update(const struct ct_offload_ctx *ctx)
 }
 
 /* Notifies providers that software observed the connection transition
- * to established (reply-direction packet).  A signal only. */
+ * to established (reply-direction packet).  A signal only; providers
+ * confirm via op->hw_confirmed. */
 void
 ct_offload_conn_notify_established(const struct ct_offload_ctx *ctx)
 {
@@ -353,4 +452,35 @@ ct_offload_flow_offloadable(struct netdev *netdev_in,
     ovs_rwlock_unlock(&ct_offload_rwlock);
 
     return result;
+}
+
+/* ct_offload_conn_is_tracked() - returns true if a provider accepted the
+ * connection (state ADDED or HW_CONFIRMED).  Note that this does not
+ * mean hardware has confirmed the connection; use
+ * ct_offload_conn_is_hw_confirmed() for that. */
+bool
+ct_offload_conn_is_tracked(const struct conn *conn)
+    OVS_REQUIRES(conn->lock)
+{
+    if (ct_offload_private_id == CT_PRIVATE_ID_INVALID) {
+        return false;
+    }
+
+    return conn_private_get(conn, ct_offload_private_id) != NULL;
+}
+
+/* ct_offload_conn_is_hw_confirmed() - returns true if a provider
+ * acknowledged the entry in hardware (state HW_CONFIRMED). */
+bool
+ct_offload_conn_is_hw_confirmed(const struct conn *conn)
+    OVS_REQUIRES(conn->lock)
+{
+    if (ct_offload_private_id == CT_PRIVATE_ID_INVALID) {
+        return false;
+    }
+
+    struct ct_offload_data *data =
+        conn_private_get(conn, ct_offload_private_id);
+
+    return data && data->state == CT_OFFLOAD_STATE_HW_CONFIRMED;
 }

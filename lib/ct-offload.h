@@ -49,15 +49,16 @@ struct ct_offload_ctx {
 
 /* Operations delivered to a provider's batch_submit() callback.  Each op
  * carries its own 'ctx'; the fields each type uses are noted below.  The
- * provider fills in the op result fields ('error', 'last_used').
- * At most one provider handles a given connection -- the one whose
- * ports the connection flows through; every other provider leaves
- * the result fields untouched:
+ * provider fills in the op result fields ('error', 'last_used',
+ * 'hw_confirmed').  At most one provider handles a given connection --
+ * the one whose ports the connection flows through; every other
+ * provider leaves the result fields untouched:
  *
  *   CT_OFFLOAD_OP_ADD (uses conn, netdev_in, input_port_id, dir):
  *       Sets op->error to 0 if accepted, another positive errno on
- *       failure; leave the result fields untouched when not handling
- *       the connection.
+ *       failure, and op->hw_confirmed if the entry is fully programmed
+ *       at add time; leave the result fields untouched when not
+ *       handling the connection.
  *
  *   CT_OFFLOAD_OP_DEL (uses conn, dir):
  *       Removes any offloaded state; providers must tolerate unknown
@@ -65,16 +66,20 @@ struct ct_offload_ctx {
  *
  *   CT_OFFLOAD_OP_UPD (uses conn, dir):
  *       Sets op->last_used to the hardware last-used time in ms since
- *       epoch (0 if none).  Sets op->error to 0.  Leave the result
- *       fields untouched when not holding the connection.
+ *       epoch (0 if none).  Sets op->error to 0.  May set
+ *       op->hw_confirmed if the provider noticed the connection active
+ *       on its own.  Leave the result fields untouched when not
+ *       holding the connection.
  *
  *   CT_OFFLOAD_OP_ESTABLISHED (uses conn, input_port_id, dir):
  *       Software observed the connection transition to established
  *       (reply-direction packet); carries the reverse-direction input
  *       port.  A signal only: providers may act on it or ignore it;
- *       it requests nothing.  op->error may report a failure acting
- *       on the signal (diagnostics only).  Leave the result fields
- *       untouched otherwise. */
+ *       it requests nothing.  A provider confirming an entry in
+ *       hardware does so via op->hw_confirmed, which it may set on any
+ *       op it handles.  op->error may report a failure acting on the
+ *       signal (diagnostics only).  Leave the result fields untouched
+ *       otherwise. */
 enum ct_offload_op_type {
     CT_OFFLOAD_OP_ADD,              /* Add operation. */
     CT_OFFLOAD_OP_DEL,              /* Del operation. */
@@ -93,6 +98,8 @@ struct ct_offload_op {
     /* Result fields, filled in by the provider as documented above. */
     int error;
     long long last_used;
+    bool hw_confirmed;              /* Provider acknowledged the entry
+                                     * in hardware. */
 };
 
 /* Ops embedded directly in struct ct_offload_op_batch; larger batches
@@ -191,8 +198,16 @@ void ct_offload_unregister(const struct ct_offload_class *);
 int  ct_offload_open(const char *name);
 void ct_offload_close(const char *name);
 
-/* Module initialization (register built-in providers). */
+/* Module initialization (register built-in providers).  Must run before
+ * any connections are created, as it allocates the per-connection private
+ * slot used to track offload state. */
 void ct_offload_module_init(void);
+
+/* Offload state of a connection, tracked in a conn-private slot:
+ * tracked (a provider accepted the ADD op) or hw-confirmed (a provider
+ * acknowledged the entry in hardware).  Both require conn->lock. */
+bool ct_offload_conn_is_tracked(const struct conn *);
+bool ct_offload_conn_is_hw_confirmed(const struct conn *);
 
 /* Single-operation convenience wrappers around ct_offload_op_batch_*(),
  * each submitting a batch of one op to every open provider.  Callers
