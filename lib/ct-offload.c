@@ -78,10 +78,7 @@ ct_offload_register(const struct ct_offload_class *class)
 
     ovs_assert(class);
     ovs_assert(class->name);
-    ovs_assert(class->conn_add);
-    ovs_assert(class->conn_del);
-    ovs_assert(class->conn_update);
-    ovs_assert(class->conn_established);
+    ovs_assert(class->batch_submit);
     ovs_assert(class->might_offload);
 
     ovs_rwlock_wrlock(&ct_offload_rwlock);
@@ -214,114 +211,125 @@ ct_offload_module_init(void)
      * directly from their own module-init routines. */
 }
 
-/* ct_offload_conn_add() - notify all eligible open providers of a new
- * connection.
+/* ct_offload_op_batch_add() - append one operation to 'batch'.
  *
- * Iterates over open providers and calls conn_add() on each one that
- * reports might_offload() == true for this context.  Providers that fail
- * are logged at debug level; the framework does not propagate per-provider
- * errors to the caller, as remaining providers must still be notified for
- * their hardware conntrack details to function. */
+ * The context is copied by value; no references are taken on ctx.conn or
+ * ctx.netdev_in, so they must remain valid until the batch is submitted. */
+void
+ct_offload_op_batch_add(struct ct_offload_op_batch *batch,
+                        enum ct_offload_op_type type,
+                        const struct ct_offload_ctx *ctx)
+{
+    if (batch->n_ops == batch->allocated) {
+        batch->allocated = batch->allocated ? 2 * batch->allocated : 8;
+        batch->ops = xrealloc(batch->ops,
+                              batch->allocated * sizeof *batch->ops);
+    }
+
+    struct ct_offload_op *op = &batch->ops[batch->n_ops++];
+
+    op->type = type;
+    op->ctx = *ctx;
+    op->error = 0;
+    op->last_used = 0;
+}
+
+/* ct_offload_op_batch_submit() - submit 'batch' to every open provider.
+ *
+ * Each provider's batch_submit() callback runs with only the read side of
+ * ct_offload_rwlock held, in registration order, and fills in the op
+ * result fields as documented with enum ct_offload_op_type.  When more
+ * than one provider is open, later providers may overwrite the results of
+ * earlier ones; see the notes in ct-offload.h. */
+void
+ct_offload_op_batch_submit(struct ct_offload_op_batch *batch)
+{
+    struct ct_offload_class_node *node;
+
+    ovs_rwlock_rdlock(&ct_offload_rwlock);
+    LIST_FOR_EACH (node, list_node, &ct_offload_classes) {
+        if (node->refcnt == 0) {
+            continue;
+        }
+        node->class->batch_submit(batch);
+    }
+    ovs_rwlock_unlock(&ct_offload_rwlock);
+}
+
+/* ct_offload_conn_add() - submit an ADD op for 'ctx' to every open
+ * provider.
+ *
+ * Providers that decline (EOPNOTSUPP) or fail are logged at debug level;
+ * the framework does not propagate per-provider errors to the caller, as
+ * remaining providers must still be notified for their hardware conntrack
+ * details to function. */
 void
 ct_offload_conn_add(const struct ct_offload_ctx *ctx)
 {
-    struct ct_offload_class_node *node;
+    struct ct_offload_op op = { .type = CT_OFFLOAD_OP_ADD, .ctx = *ctx };
+    struct ct_offload_op_batch batch = {
+        .ops = &op, .n_ops = 1, .allocated = 1
+    };
 
-    ovs_rwlock_rdlock(&ct_offload_rwlock);
-    LIST_FOR_EACH (node, list_node, &ct_offload_classes) {
-        const struct ct_offload_class *class = node->class;
+    ct_offload_op_batch_submit(&batch);
 
-        if (node->refcnt == 0 || !class->might_offload(ctx)) {
-            continue;
-        }
-
-        int error = class->conn_add(ctx);
-
-        if (error) {
-            VLOG_DBG("ct offload class %s failed to add connection: %s",
-                     class->name, ovs_strerror(error));
-        }
+    if (op.error && op.error != EOPNOTSUPP) {
+        VLOG_DBG("ct offload failed to add connection: %s",
+                 ovs_strerror(op.error));
     }
-    ovs_rwlock_unlock(&ct_offload_rwlock);
 }
 
-/* ct_offload_conn_del() - notify all open providers that a connection was
- * removed.
+/* ct_offload_conn_del() - submit a DEL op for 'ctx' to every open
+ * provider.
  *
- * Called unconditionally on all open providers so that each can clean up
- * any state it may have installed. */
+ * Called unconditionally so that each provider can clean up any state it
+ * may have installed. */
 void
 ct_offload_conn_del(const struct ct_offload_ctx *ctx)
 {
-    struct ct_offload_class_node *node;
+    struct ct_offload_op op = { .type = CT_OFFLOAD_OP_DEL, .ctx = *ctx };
+    struct ct_offload_op_batch batch = {
+        .ops = &op, .n_ops = 1, .allocated = 1
+    };
 
-    ovs_rwlock_rdlock(&ct_offload_rwlock);
-    LIST_FOR_EACH (node, list_node, &ct_offload_classes) {
-        if (node->refcnt == 0) {
-            continue;
-        }
-        node->class->conn_del(ctx);
-    }
-    ovs_rwlock_unlock(&ct_offload_rwlock);
+    ct_offload_op_batch_submit(&batch);
 }
 
-/* ct_offload_conn_established() - notify providers of the established
- * transition.
+/* ct_offload_conn_update() - submit an UPD op for 'ctx'.
  *
- * Returns true only if every open provider reports the connection fully
- * established in hardware; false if any provider deferred or failed, or
- * no providers are open. */
-bool
-ct_offload_conn_established(const struct ct_offload_ctx *ctx)
-{
-    struct ct_offload_class_node *node;
-    bool established = false;
-    bool any = false;
-
-    ovs_rwlock_rdlock(&ct_offload_rwlock);
-    LIST_FOR_EACH (node, list_node, &ct_offload_classes) {
-        if (node->refcnt == 0) {
-            continue;
-        }
-        any = true;
-        if (!node->class->conn_established(ctx)) {
-            established = false;
-            break;
-        }
-        established = true;
-    }
-    ovs_rwlock_unlock(&ct_offload_rwlock);
-
-    return any ? established : false;
-}
-
-/* ct_offload_conn_update() - query the hardware last-used timestamp.
- *
- * Iterates over open providers and returns the first non-zero timestamp
- * returned by a provider's conn_update() callback.  Returns 0 if no open
- * provider supplies a timestamp. */
+ * Returns the hardware last-used timestamp in milliseconds since epoch,
+ * or 0 if no open provider supplied one. */
 long long
 ct_offload_conn_update(const struct ct_offload_ctx *ctx)
 {
-    struct ct_offload_class_node *node;
-    long long last_used = 0;
+    struct ct_offload_op op = { .type = CT_OFFLOAD_OP_UPD, .ctx = *ctx };
+    struct ct_offload_op_batch batch = {
+        .ops = &op, .n_ops = 1, .allocated = 1
+    };
 
-    ovs_rwlock_rdlock(&ct_offload_rwlock);
-    LIST_FOR_EACH (node, list_node, &ct_offload_classes) {
-        if (node->refcnt == 0) {
-            continue;
-        }
+    ct_offload_op_batch_submit(&batch);
 
-        long long ts = node->class->conn_update(ctx);
+    return op.last_used;
+}
 
-        if (ts) {
-            last_used = ts;
-            break;
-        }
-    }
-    ovs_rwlock_unlock(&ct_offload_rwlock);
+/* ct_offload_conn_established() - submit an EST op for 'ctx'.
+ *
+ * Returns true if the connection is fully established in hardware, false
+ * if establishment failed or was deferred, or no providers are open (the
+ * error field stays EBUSY in that case). */
+bool
+ct_offload_conn_established(const struct ct_offload_ctx *ctx)
+{
+    struct ct_offload_op op = {
+        .type = CT_OFFLOAD_OP_EST, .ctx = *ctx, .error = EBUSY
+    };
+    struct ct_offload_op_batch batch = {
+        .ops = &op, .n_ops = 1, .allocated = 1
+    };
 
-    return last_used;
+    ct_offload_op_batch_submit(&batch);
+
+    return op.error == 0;
 }
 
 /* ct_offload_might_offload() - returns true if any open provider might
