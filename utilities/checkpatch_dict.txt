@@ -78,7 +78,9 @@ ethernet
 ethertype
 ethtool
 eventmask
+expirations
 faq
+fallbacks
 fastpath
 fd
 fdb

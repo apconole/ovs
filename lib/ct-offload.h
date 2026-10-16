@@ -207,6 +207,7 @@ void ct_offload_close(const char *name);
  * slot used to track offload state. */
 void ct_offload_module_init(void);
 
+
 /* Returns true when CT offload is enabled (delegates to
  * dpif_offload_enabled()). */
 bool ct_offload_enabled(void);

@@ -22,6 +22,7 @@
 
 #include "conntrack.h"
 #include "conntrack-private.h"
+#include "ct-offload-dummy.h"
 #include "dpif-offload.h"
 #include "ovs-thread.h"
 #include "timeval.h"
@@ -33,11 +34,12 @@
 VLOG_DEFINE_THIS_MODULE(ct_offload);
 
 /* Built-in CT offload provider classes.  Only those whose name matches a
- * registered dpif offload class are activated by ct_offload_module_init(),
- * tying CT offload to the active hardware offload provider.  Populated as
- * concrete providers are added in later patches. */
-static const struct ct_offload_class *base_ct_offload_classes[]
-    OVS_UNUSED = {
+ * registered dpif offload class are registered by ct_offload_module_init(),
+ * tying CT offload to the active hardware offload provider.  Registration
+ * only makes the provider known; the matching dpif-offload provider
+ * activates it through ct_offload_open(). */
+static const struct ct_offload_class *base_ct_offload_classes[] = {
+    &ct_offload_dummy_class,
 };
 
 /* Private slot for storing per-connection offload state.  Allocated when
@@ -248,6 +250,8 @@ void
 ct_offload_module_init(void)
 {
     size_t n_classes = ARRAY_SIZE(base_ct_offload_classes);
+
+    ct_offload_dummy_init();
 
     for (size_t i = 0; i < n_classes; i++) {
         const struct ct_offload_class *class = base_ct_offload_classes[i];

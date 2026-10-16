@@ -18,6 +18,8 @@
 #include <errno.h>
 
 #include "dpif.h"
+#include "ct-offload.h"
+#include "ct-offload-dummy.h"
 #include "dpif-offload.h"
 #include "dpif-offload-provider.h"
 #include "dummy.h"
@@ -423,6 +425,14 @@ dummy_offload_open(const struct dpif_offload_class *offload_class,
     offload->unreference_cb = NULL;
 
     *dpif_offload = &offload->offload;
+
+    /* Activate the matching CT offload provider.  Failure is not fatal:
+     * flow offload still works, only conntrack offload stays inactive. */
+    int error = ct_offload_open(ct_offload_dummy_class.name);
+    if (error) {
+        VLOG_WARN("failed to open ct-offload provider %s: %s",
+                  ct_offload_dummy_class.name, ovs_strerror(error));
+    }
     return 0;
 }
 
@@ -431,6 +441,8 @@ dummy_offload_close(struct dpif_offload *dpif_offload)
 {
     struct dummy_offload *offload = dummy_offload_cast(dpif_offload);
     struct dpif_offload_port *port;
+
+    ct_offload_close(ct_offload_dummy_class.name);
 
     /* The ofproto layer may not call dpif_port_del() for all ports,
      * especially internal ones, so we need to clean up any remaining ports. */
@@ -642,6 +654,7 @@ dummy_offload_udp_tnl_get_src_port(
 
 static bool
 dummy_offload_are_all_actions_supported(const struct dpif_offload *offload_,
+                                        const struct match *match,
                                         odp_port_t in_odp,
                                         const struct nlattr *actions,
                                         size_t actions_len)
@@ -649,14 +662,16 @@ dummy_offload_are_all_actions_supported(const struct dpif_offload *offload_,
     const struct nlattr *nla;
     size_t left;
 
-    /* Can we fully offload this flow? For now, only output actions are
-     * supported, and only to dummy-pmd netdevs where the egress port differs
-     * from the ingress port.  The latter restriction ensures that the partial
-     * offload test cases pass.
+    /* Can we fully offload this flow?  Output actions are supported for
+     * dummy-pmd netdevs where the egress port differs from the ingress port.
+     * CT actions are fully offloadable only when a CT offload provider
+     * claims flows with this key on this port; otherwise the flow is
+     * partially offloaded and ct() stays in software.  Recirc is not
+     * yet supported at the hardware offload layer.
      *
-     * The reason for supporting only dummy-pmd netdevs as output targets is
-     * that they provide full protection when calling netdev_send() from any
-     * thread, via a netdev-level mutex. */
+     * The reason for restricting output to dummy-pmd netdevs is that they
+     * provide full protection when calling netdev_send() from any thread,
+     * via a netdev-level mutex. */
     NL_ATTR_FOR_EACH (nla, left, actions, actions_len) {
         enum ovs_action_attr action = nl_attr_type(nla);
 
@@ -685,6 +700,17 @@ dummy_offload_are_all_actions_supported(const struct dpif_offload *offload_,
             break;
         }
 
+        case OVS_ACTION_ATTR_CT: {
+            struct dummy_offload_port *ct_port =
+                dummy_offload_get_port_by_odp_port(offload_, in_odp);
+            struct netdev *netdev = ct_port ? ct_port->pm_port.netdev : NULL;
+
+            if (!ct_offload_flow_offloadable(netdev, match, nla)) {
+                return false;
+            }
+            break;
+        }
+
         case OVS_ACTION_ATTR_UNSPEC:
         case OVS_ACTION_ATTR_USERSPACE:
         case OVS_ACTION_ATTR_SET:
@@ -696,7 +722,6 @@ dummy_offload_are_all_actions_supported(const struct dpif_offload *offload_,
         case OVS_ACTION_ATTR_PUSH_MPLS:
         case OVS_ACTION_ATTR_POP_MPLS:
         case OVS_ACTION_ATTR_SET_MASKED:
-        case OVS_ACTION_ATTR_CT:
         case OVS_ACTION_ATTR_TRUNC:
         case OVS_ACTION_ATTR_PUSH_ETH:
         case OVS_ACTION_ATTR_POP_ETH:
@@ -777,6 +802,14 @@ dummy_offload_hw_process_pkt(const struct dpif_offload *offload_,
             break;
         }
 
+        case OVS_ACTION_ATTR_CT:
+            /* Connection tracking is performed by the "hardware": the
+             * connection was established in software by the first
+             * packet (before the flow was fully offloaded) and is
+             * mirrored by the ct-offload provider.  Nothing to do
+             * per-packet. */
+            break;
+
         case OVS_ACTION_ATTR_UNSPEC:
         case OVS_ACTION_ATTR_USERSPACE:
         case OVS_ACTION_ATTR_SET:
@@ -788,7 +821,6 @@ dummy_offload_hw_process_pkt(const struct dpif_offload *offload_,
         case OVS_ACTION_ATTR_PUSH_MPLS:
         case OVS_ACTION_ATTR_POP_MPLS:
         case OVS_ACTION_ATTR_SET_MASKED:
-        case OVS_ACTION_ATTR_CT:
         case OVS_ACTION_ATTR_TRUNC:
         case OVS_ACTION_ATTR_PUSH_ETH:
         case OVS_ACTION_ATTR_POP_ETH:
@@ -835,7 +867,8 @@ dummy_flow_put(const struct dpif_offload *offload_, struct netdev *netdev,
     }
 
     full_offload = dummy_offload_are_all_actions_supported(
-                        offload_, put->match->flow.in_port.odp_port,
+                        offload_, put->match,
+                        put->match->flow.in_port.odp_port,
                         put->actions, put->actions_len);
 
     ovs_mutex_lock(&port->port_mutex);
