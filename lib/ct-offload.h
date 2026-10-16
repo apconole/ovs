@@ -183,8 +183,7 @@ struct ct_offload_class {
 
 /* Register/unregister a provider class.  Must be called at module init,
  * before any connections are created; registration alone does not activate
- * the provider.  conn_add, conn_del, conn_update, conn_established, and
- * might_offload must be non-NULL. */
+ * the provider.  batch_submit and might_offload must be non-NULL. */
 int  ct_offload_register(const struct ct_offload_class *);
 void ct_offload_unregister(const struct ct_offload_class *);
 

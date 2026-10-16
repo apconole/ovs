@@ -3,6 +3,13 @@ Post-v4.0.0
    - ovs-vswitchd:
      * Mirror filters now accept masked fields, e.g. "ip,nw_src=10.0.0.0/24"
        in the "filter" column of the Mirror table.
+   - Userspace datapath:
+     * Conntrack offloading framework: hardware vendors can now register a
+       ct_offload_class to receive connection lifecycle operations (add,
+       del, update, established) through a batch interface and keep
+       hardware CT state in sync with OVS's software conntrack table.  See
+       Documentation/topics/userspace-conntrack-offloading.rst for the
+       integration guide.
 
 
 v4.0.0 - 17 Aug 2026
