@@ -145,6 +145,7 @@ libreswan
 libssl
 libxdp
 linux
+lifecycle
 liveness
 lldp
 llvm

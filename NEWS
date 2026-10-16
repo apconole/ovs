@@ -6,6 +6,22 @@ Post-v4.0.0
    - ovs-vswitchd:
      * Mirror filters now accept masked fields, e.g. "ip,nw_src=10.0.0.0/24"
        in the "filter" column of the Mirror table.
+   - Userspace datapath:
+     * Conntrack offloading framework: hardware vendors can now register a
+       ct_offload_class to receive connection lifecycle operations (add,
+       established, update, delete) through a batch interface and keep
+       hardware CT state in sync with OVS's software conntrack table.
+       Flows containing ct() are fully offloaded only when a provider
+       claims them, checked at flow installation time.  See
+       Documentation/topics/userspace-conntrack-offloading.rst for the
+       integration guide.
+     * 'ovs-appctl dpctl/dump-conntrack' output now includes an
+       'offloaded' flag for connections tracked by a conntrack offload
+       provider.
+     * FTP ALG log messages now appear under the 'conntrack_ftp' vlog
+       module instead of 'conntrack'.  Deployments with per-module vlog
+       configuration, e.g. 'ovs-appctl vlog/set conntrack:file:warn',
+       should update their configuration.
 
 
 v4.0.0 - 17 Aug 2026
