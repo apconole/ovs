@@ -22,11 +22,11 @@
 
 #include "conntrack.h"
 #include "conntrack-private.h"
+#include "ct-offload-dummy.h"
 #include "dpif-offload.h"
 #include "ovs-thread.h"
 #include "timeval.h"
 #include "util.h"
-#include "vswitch-idl.h"
 
 #include "openvswitch/list.h"
 #include "openvswitch/vlog.h"
@@ -34,11 +34,12 @@
 VLOG_DEFINE_THIS_MODULE(ct_offload);
 
 /* Built-in CT offload provider classes.  Only those whose name matches a
- * registered dpif offload class are activated by ct_offload_module_init(),
- * tying CT offload to the active hardware offload provider.  Populated as
- * concrete providers are added in later patches. */
-static const struct ct_offload_class *base_ct_offload_classes[]
-    OVS_UNUSED = {
+ * registered dpif offload class are registered by ct_offload_module_init(),
+ * tying CT offload to the active hardware offload provider.  Registration
+ * only makes the provider known; the matching dpif-offload provider
+ * activates it through ct_offload_open(). */
+static const struct ct_offload_class *base_ct_offload_classes[] = {
+    &ct_offload_dummy_class,
 };
 
 /* Private slot for storing per-connection offload state.  Allocated when
@@ -278,25 +279,6 @@ bool
 ct_offload_enabled(void)
 {
     return dpif_offload_enabled();
-}
-
-/* ct_offload_set_global_cfg() - configure CT offload from OVSDB.
- *
- * Called internally by dpif_offload_set_global_cfg() once hardware offload
- * has been enabled and the appropriate dpif offload classes are known. */
-void
-ct_offload_set_global_cfg(const struct ovsrec_open_vswitch *cfg OVS_UNUSED)
-{
-    static struct ovsthread_once once = OVSTHREAD_ONCE_INITIALIZER;
-
-    if (!dpif_offload_enabled()) {
-        return;
-    }
-
-    if (ovsthread_once_start(&once)) {
-        ct_offload_module_init();
-        ovsthread_once_done(&once);
-    }
 }
 
 /* ct_offload_op_batch_add() - append one operation to 'batch'.

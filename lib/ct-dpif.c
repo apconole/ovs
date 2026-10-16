@@ -607,6 +607,9 @@ ct_dpif_format_entry(const struct ct_dpif_entry *entry, struct ds *ds,
     }
     ct_dpif_format_protoinfo(ds, ",protoinfo=", &entry->protoinfo, verbose);
     ct_dpif_format_helper(ds, ",helper=", &entry->helper);
+    if (entry->offloaded) {
+        ds_put_cstr(ds, ",offloaded");
+    }
     if (verbose && entry->tuple_parent.l3_type != 0) {
         ds_put_cstr(ds, ",parent=(");
         ct_dpif_format_tuple(ds, &entry->tuple_parent);

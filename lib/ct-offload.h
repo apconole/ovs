@@ -22,7 +22,6 @@
 #include "openvswitch/types.h"
 
 struct netdev;
-struct ovsrec_open_vswitch;
 
 /* Context for offload as part of the callbacks that all connection
  * offload APIs receive.  The direction identifies which of the
@@ -202,9 +201,6 @@ void ct_offload_close(const char *name);
  * slot used to track offload state. */
 void ct_offload_module_init(void);
 
-/* Global configuration: called internally by dpif_offload_set_global_cfg()
- * to enable CT offload once hardware offload is active. */
-void ct_offload_set_global_cfg(const struct ovsrec_open_vswitch *);
 
 /* Returns true when CT offload is enabled (delegates to
  * dpif_offload_enabled()). */

@@ -74,6 +74,31 @@ filter_flow_dump () {
 strip_metadata () {
     sed 's/metadata=0x[0-9a-f]*/metadata=0x0/'
 }
+filter_ct_offload_dummy_conn_add () {
+    grep 'ct_offload_dummy.*conn add:' | sed 's/.*|DBG|//' | sort | uniq
+}
+
+filter_ct_offload_dummy_conn_del () {
+    grep 'ct_offload_dummy.*conn del:' | sed 's/.*|DBG|//' | sort | uniq
+}
+
+filter_ct_offload_dummy_conn_established () {
+    grep 'ct_offload_dummy.*conn established:' | sed 's/.*|DBG|//' \
+        | sort | uniq
+}
+
+strip_ct_dump_flows () {
+    sed '
+    /^flow-dump from/d
+    s/ufid:[-0-9a-f]*, //
+    s/, packets:[0-9]*//
+    s/, bytes:[0-9]*//
+    s/, used:[^ ,]*//
+    s/[^,]*(0\/0),//g
+    s/, dp-extra-info.*//
+    s/^[[:space:]]*//' | sort
+}
+
 ]
 m4_divert_pop([PREPARE_TESTS])
 
@@ -3773,4 +3798,83 @@ dnl Remove warning logs to let test suite pass.
 OVS_VSWITCHD_STOP(["dnl
   /.*failed to put.*$/d
   /.*failed to flow_del.*$/d"])
+AT_CLEANUP
+
+dnl Test that the CT offload dummy provider receives conn add, established,
+dnl and del operations when packets traverse a conntrack commit flow in both
+dnl directions on a dummy datapath with hw-offload enabled.  It also checks
+dnl that the input netdev is propagated in each direction, and that both the
+dnl conntrack entry and the datapath flows report their offload state.
+AT_SETUP([dpif-netdev - conntrack offload dummy])
+AT_KEYWORDS([conntrack offload])
+OVS_VSWITCHD_START(
+  [add-port br0 p1 -- \
+   set interface p1 type=dummy-pmd ofport_request=1 \
+                    options:ifindex=1100 -- \
+   add-port br0 p2 -- \
+   set interface p2 type=dummy-pmd ofport_request=2 \
+                    options:ifindex=1101 -- \
+   set bridge br0 datapath-type=dummy \
+                  other-config:datapath-id=1234 fail-mode=secure], [], [], \
+  [--dummy-numa="0,0,0,0,1,1,1,1"])
+
+AT_CHECK([ovs-appctl vlog/set dpif_offload_dummy:file:dbg ct_offload_dummy:file:dbg])
+AT_CHECK([ovs-vsctl set Open_vSwitch . other_config:hw-offload=true])
+OVS_WAIT_UNTIL([grep "Flow HW offload is enabled" ovs-vswitchd.log])
+
+AT_CHECK([ovs-ofctl add-flow br0 \
+  'table=0,priority=100,in_port=p1,ip,ct_state=-trk,actions=ct(commit,table=1)'])
+AT_CHECK([ovs-ofctl add-flow br0 \
+  'table=1,priority=100,in_port=p1,ip,ct_state=+trk,actions=output:p2'])
+AT_CHECK([ovs-ofctl add-flow br0 \
+  'table=0,priority=100,in_port=p2,ip,ct_state=-trk,actions=ct(table=1)'])
+AT_CHECK([ovs-ofctl add-flow br0 \
+  'table=1,priority=100,in_port=p2,ip,ct_state=+trk,actions=output:p1'])
+
+flow_s="eth_src=50:54:00:00:00:01,eth_dst=50:54:00:00:00:02,udp,ip_src=10.0.0.1,ip_dst=10.0.0.2,ip_frag=no,udp_src=1000,udp_dst=2000"
+pkt=$(ovs-ofctl compose-packet --bare "${flow_s}")
+AT_CHECK([ovs-appctl netdev-dummy/receive p1 "${pkt}"])
+
+OVS_WAIT_UNTIL([grep 'ct_offload_dummy.*conn add:' ovs-vswitchd.log])
+AT_CHECK([filter_ct_offload_dummy_conn_add < ovs-vswitchd.log | wc -l | tr -d ' '],
+  [0], [1
+])
+AT_CHECK([filter_ct_offload_dummy_conn_add < ovs-vswitchd.log \
+  | grep -c 'fwd_in=p1'], [0], [1
+])
+
+reply_flow_s="eth_src=50:54:00:00:00:02,eth_dst=50:54:00:00:00:01,udp,ip_src=10.0.0.2,ip_dst=10.0.0.1,ip_frag=no,udp_src=2000,udp_dst=1000"
+reply_pkt=$(ovs-ofctl compose-packet --bare "${reply_flow_s}")
+AT_CHECK([ovs-appctl netdev-dummy/receive p2 "${reply_pkt}"])
+
+OVS_WAIT_UNTIL([grep 'ct_offload_dummy.*conn established:' ovs-vswitchd.log])
+AT_CHECK([filter_ct_offload_dummy_conn_established < ovs-vswitchd.log \
+  | wc -l | tr -d ' '], [0], [1
+])
+AT_CHECK([filter_ct_offload_dummy_conn_established < ovs-vswitchd.log \
+  | grep -c 'rev_in=p2'], [0], [1
+])
+
+OVS_WAIT_UNTIL([ovs-appctl coverage/show | grep ct_offload_dummy_add])
+OVS_WAIT_UNTIL([ovs-appctl coverage/show | grep ct_offload_dummy_est])
+OVS_WAIT_UNTIL([ovs-appctl dpctl/dump-conntrack | grep offloaded])
+
+dnl The CT datapath flows are offloaded too; the ct() passes only partially
+dnl offload, while the post-recirculation flows fully offload.
+OVS_WAIT_UNTIL([test "$(grep -c 'succeed to add netdev flow' ovs-vswitchd.log)" -ge 4])
+AT_CHECK([ovs-appctl dpctl/dump-flows -m | strip_ct_dump_flows],
+  [0], [dnl
+recirc_id(0),in_port(p1),ct_state(0/0x20),packet_type(ns=0,id=0),eth(src=50:54:00:00:00:01/00:00:00:00:00:00,dst=50:54:00:00:00:02/00:00:00:00:00:00),eth_type(0x0800),ipv4(src=10.0.0.1/0.0.0.0,dst=10.0.0.2/0.0.0.0,proto=17/0,tos=0/0,ttl=0/0,frag=no),udp(src=1000/0,dst=2000/0), offloaded:partial, dp:ovs, actions:ct(commit),recirc(0x1)
+recirc_id(0),in_port(p2),ct_state(0/0x20),packet_type(ns=0,id=0),eth(src=50:54:00:00:00:02/00:00:00:00:00:00,dst=50:54:00:00:00:01/00:00:00:00:00:00),eth_type(0x0800),ipv4(src=10.0.0.2/0.0.0.0,dst=10.0.0.1/0.0.0.0,proto=17/0,tos=0/0,ttl=0/0,frag=no),udp(src=2000/0,dst=1000/0), offloaded:partial, dp:ovs, actions:ct,recirc(0x2)
+recirc_id(0x1),in_port(p1),ct_state(0x21/0x20),ct_tuple4(src=10.0.0.1/0.0.0.0,dst=10.0.0.2/0.0.0.0,proto=17/0,tp_src=1000/0,tp_dst=2000/0),packet_type(ns=0,id=0),eth(src=50:54:00:00:00:01/00:00:00:00:00:00,dst=50:54:00:00:00:02/00:00:00:00:00:00),eth_type(0x0800),ipv4(src=10.0.0.1/0.0.0.0,dst=10.0.0.2/0.0.0.0,proto=17/0,tos=0/0,ttl=0/0,frag=no),udp(src=1000/0,dst=2000/0), offloaded:yes, dp:dummy, actions:p2
+recirc_id(0x2),in_port(p2),ct_state(0x2a/0x20),ct_tuple4(src=10.0.0.1/0.0.0.0,dst=10.0.0.2/0.0.0.0,proto=17/0,tp_src=1000/0,tp_dst=2000/0),packet_type(ns=0,id=0),eth(src=50:54:00:00:00:02/00:00:00:00:00:00,dst=50:54:00:00:00:01/00:00:00:00:00:00),eth_type(0x0800),ipv4(src=10.0.0.2/0.0.0.0,dst=10.0.0.1/0.0.0.0,proto=17/0,tos=0/0,ttl=0/0,frag=no),udp(src=2000/0,dst=1000/0), offloaded:yes, dp:dummy, actions:p1
+])
+
+AT_CHECK([ovs-appctl dpctl/flush-conntrack])
+OVS_WAIT_UNTIL([grep 'ct_offload_dummy.*conn del:' ovs-vswitchd.log])
+AT_CHECK([filter_ct_offload_dummy_conn_del < ovs-vswitchd.log | wc -l | tr -d ' '],
+  [0], [1
+])
+
+OVS_VSWITCHD_STOP
 AT_CLEANUP

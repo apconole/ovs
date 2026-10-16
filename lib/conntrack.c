@@ -2848,6 +2848,7 @@ conn_to_ct_dpif_entry(const struct conn *conn, struct ct_dpif_entry *entry,
     ovs_mutex_lock(&conn->lock);
     entry->mark = conn->mark;
     memcpy(&entry->labels, &conn->label, sizeof entry->labels);
+    entry->offloaded = ct_offload_conn_is_tracked(conn);
 
     long long expiration = conn_expiration(conn) - now;
 

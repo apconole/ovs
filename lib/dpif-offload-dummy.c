@@ -18,6 +18,8 @@
 #include <errno.h>
 
 #include "dpif.h"
+#include "ct-offload.h"
+#include "ct-offload-dummy.h"
 #include "dpif-offload.h"
 #include "dpif-offload-provider.h"
 #include "dummy.h"
@@ -423,6 +425,14 @@ dummy_offload_open(const struct dpif_offload_class *offload_class,
     offload->unreference_cb = NULL;
 
     *dpif_offload = &offload->offload;
+
+    /* Activate the matching CT offload provider.  Failure is not fatal:
+     * flow offload still works, only conntrack offload stays inactive. */
+    int error = ct_offload_open(ct_offload_dummy_class.name);
+    if (error) {
+        VLOG_WARN("failed to open ct-offload provider %s: %s",
+                  ct_offload_dummy_class.name, ovs_strerror(error));
+    }
     return 0;
 }
 
@@ -431,6 +441,8 @@ dummy_offload_close(struct dpif_offload *dpif_offload)
 {
     struct dummy_offload *offload = dummy_offload_cast(dpif_offload);
     struct dpif_offload_port *port;
+
+    ct_offload_close(ct_offload_dummy_class.name);
 
     /* The ofproto layer may not call dpif_port_del() for all ports,
      * especially internal ones, so we need to clean up any remaining ports. */
@@ -649,14 +661,16 @@ dummy_offload_are_all_actions_supported(const struct dpif_offload *offload_,
     const struct nlattr *nla;
     size_t left;
 
-    /* Can we fully offload this flow? For now, only output actions are
-     * supported, and only to dummy-pmd netdevs where the egress port differs
-     * from the ingress port.  The latter restriction ensures that the partial
-     * offload test cases pass.
+    /* Can we fully offload this flow?  Output actions are supported for
+     * dummy-pmd netdevs where the egress port differs from the ingress port.
+     * CT actions are also accepted: the connection lifecycle is handled by
+     * the ct-offload provider (ct_offload_dummy_class) while the dummy
+     * backend is active.  Recirc is not yet supported at the hardware
+     * offload layer.
      *
-     * The reason for supporting only dummy-pmd netdevs as output targets is
-     * that they provide full protection when calling netdev_send() from any
-     * thread, via a netdev-level mutex. */
+     * The reason for restricting output to dummy-pmd netdevs is that they
+     * provide full protection when calling netdev_send() from any thread,
+     * via a netdev-level mutex. */
     NL_ATTR_FOR_EACH (nla, left, actions, actions_len) {
         enum ovs_action_attr action = nl_attr_type(nla);
 
@@ -685,6 +699,11 @@ dummy_offload_are_all_actions_supported(const struct dpif_offload *offload_,
             break;
         }
 
+        case OVS_ACTION_ATTR_CT:
+            /* Handled by the ct-offload provider; accept without inspecting
+             * the nested attributes. */
+            break;
+
         case OVS_ACTION_ATTR_UNSPEC:
         case OVS_ACTION_ATTR_USERSPACE:
         case OVS_ACTION_ATTR_SET:
@@ -696,7 +715,6 @@ dummy_offload_are_all_actions_supported(const struct dpif_offload *offload_,
         case OVS_ACTION_ATTR_PUSH_MPLS:
         case OVS_ACTION_ATTR_POP_MPLS:
         case OVS_ACTION_ATTR_SET_MASKED:
-        case OVS_ACTION_ATTR_CT:
         case OVS_ACTION_ATTR_TRUNC:
         case OVS_ACTION_ATTR_PUSH_ETH:
         case OVS_ACTION_ATTR_POP_ETH:

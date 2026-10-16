@@ -177,6 +177,9 @@ dpif_offload_module_init(void)
         dpif_offload_register_provider(base_dpif_offload_classes[i]);
     }
 
+    /* Register the CT offload providers that match a dpif offload class. */
+    ct_offload_module_init();
+
     ovsthread_once_done(&once);
 }
 
@@ -844,7 +847,6 @@ dpif_offload_set_global_cfg(const struct ovsrec_open_vswitch *cfg)
         }
     }
 
-    ct_offload_set_global_cfg(cfg);
 }
 
 void

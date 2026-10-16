@@ -213,6 +213,9 @@ struct ct_dpif_entry {
     uint32_t timeout;
     uint32_t mark;
     uint32_t bkt;       /* CT bucket number. */
+    /* Set by userspace datapaths when the connection is tracked by a CT
+     * offload provider.  Never set for kernel datapaths. */
+    bool offloaded;
 };
 
 enum {
