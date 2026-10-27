@@ -296,3 +296,32 @@ AT_CLEANUP
 AT_SETUP([Conntrack Library - FTP ALG parsing])
 AT_CHECK([ovstest test-conntrack ftp-alg-large-payload])
 AT_CLEANUP
+
+AT_SETUP([Conntrack Library - FTP ALG guard])
+dnl The NAT rewrite expands the packet by five bytes, but the guard requires
+dnl eight bytes of tail room (MAX_FTP_V4_NAT_DELTA).  In all cases the tail
+dnl room is insufficient, so conntrack must leave the packet unmodified and
+dnl log the warning below to stderr.  The first argument is extra headroom
+dnl and the second is tail room, in bytes.
+
+dnl Some headroom (which must not count toward expansion space), no tailroom.
+AT_CHECK([ovstest test-conntrack ftp-alg-guard 16 0], [0], [], [dnl
+conntrack|WARN|Oversized packet detected with FTPv4 (0 vs. 8)
+])
+
+dnl No headroom, no tailroom.
+AT_CHECK([ovstest test-conntrack ftp-alg-guard 0 0], [0], [], [dnl
+conntrack|WARN|Oversized packet detected with FTPv4 (0 vs. 8)
+])
+
+dnl No headroom, insufficient tailroom (less than the rewrite delta).
+AT_CHECK([ovstest test-conntrack ftp-alg-guard 0 4], [0], [], [dnl
+conntrack|WARN|Oversized packet detected with FTPv4 (4 vs. 8)
+])
+
+dnl Some headroom, insufficient tailroom (less than the guard threshold but
+dnl more than the rewrite delta - the guard is conservative).
+AT_CHECK([ovstest test-conntrack ftp-alg-guard 16 7], [0], [], [dnl
+conntrack|WARN|Oversized packet detected with FTPv4 (7 vs. 8)
+])
+AT_CLEANUP

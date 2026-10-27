@@ -21,6 +21,7 @@
 #include "fatal-signal.h"
 #include "flow.h"
 #include "netdev.h"
+#include "openvswitch/vlog.h"
 #include "ovs-thread.h"
 #include "ovstest.h"
 #include "pcap-file.h"
@@ -576,6 +577,128 @@ test_ftp_alg_large_payload(struct ovs_cmdl_context *ctx OVS_UNUSED)
     conntrack_destroy(ct);
 }
 
+/* Must stay in sync with MAX_FTP_V4_NAT_DELTA in lib/conntrack.c. */
+enum { MAX_FTP_V4_NAT_DELTA = 8 };
+
+/* The magic 2 here ensures that the L3 header is 32-bit aligned within the
+ * buffer, mirroring eth_compose().  It comes out of the headroom. */
+enum { L3_ALIGN_PAD = 2 };
+
+/* Test the FTP ALG tail-room guard.
+ *
+ * The NAT rewrite of an FTP PORT command replaces '10,0,0,100' with
+ * '192,168,100,200', which expands the packet by five bytes.  That space can
+ * only come from the tail room.
+ *
+ * This builds a packet carrying an FTP PORT command with exactly 'headroom'
+ * bytes of extra headroom (on top of L3_ALIGN_PAD) and exactly 'tailroom'
+ * bytes of tail room.  'tailroom' must be less than MAX_FTP_V4_NAT_DELTA, so
+ * the guard must reject the rewrite, leaving the packet unmodified and
+ * logging a warning to stderr. */
+static void
+test_ftp_alg_guard(struct ovs_cmdl_context *ctx)
+{
+    struct eth_addr eth_src = ETH_ADDR_C(00, 01, 02, 03, 04, 05);
+    struct eth_addr eth_dst = ETH_ADDR_C(00, 06, 07, 08, 09, 0a);
+    size_t headroom = strtoul(ctx->argv[1], NULL, 0);
+    size_t tailroom = strtoul(ctx->argv[2], NULL, 0);
+    ovs_be32 ip_dst = inet_addr("192.168.100.200");
+    ovs_be32 ip_src = inet_addr("10.0.0.100");
+    uint16_t sport = 54321;
+    uint16_t dport = 21;
+
+    char ftp_cmd[] = "PORT 10,0,0,100,212,53\r\n";
+    size_t ftp_len = strlen(ftp_cmd);
+
+    vlog_set_pattern(VLF_CONSOLE, "%c|%p|%m");
+
+    ovs_assert(headroom % 4 == 0); /* headroom needs to be a multiple of 4. */
+    ovs_assert(tailroom < MAX_FTP_V4_NAT_DELTA);
+
+    struct nat_action_info_t nat_info;
+    memset(&nat_info, 0, sizeof nat_info);
+    nat_info.nat_action = NAT_ACTION_SRC;
+    nat_info.min_addr.ipv4 = ip_dst;
+    nat_info.max_addr.ipv4 = ip_dst;
+
+    ct = conntrack_init();
+    conntrack_set_tcp_seq_chk(ct, false);
+
+    long long now = time_msec();
+
+    struct dp_packet *syn = build_eth_ip_packet(NULL, eth_src, eth_dst,
+                                                ip_src, ip_dst,
+                                                IPPROTO_TCP, 0);
+    build_tcp_packet(syn, sport, dport, TCP_SYN, NULL, 0);
+
+    struct dp_packet_batch syn_batch;
+    dp_packet_batch_init_packet(&syn_batch, syn);
+    conntrack_execute(ct, &syn_batch, htons(ETH_TYPE_IP), false, true, 0,
+                      NULL, NULL, "ftp", &nat_info, now, 0);
+    dp_packet_delete_batch(&syn_batch, true);
+
+    /* Allocate a buffer that holds the packet plus exactly 'headroom' bytes
+     * of extra head room (on top of L3_ALIGN_PAD) and exactly 'tailroom'
+     * bytes of tail room. */
+    size_t pkt_len = ETH_HEADER_LEN + IP_HEADER_LEN + TCP_HEADER_LEN +
+                     ftp_len;
+    struct dp_packet *pkt = dp_packet_new(pkt_len + L3_ALIGN_PAD + headroom
+                                          + tailroom);
+    dp_packet_reserve(pkt, L3_ALIGN_PAD + headroom);
+    memset(dp_packet_put_uninit(pkt, pkt_len), 0, pkt_len);
+
+    struct eth_header *eth = dp_packet_data(pkt);
+    eth->eth_dst = eth_dst;
+    eth->eth_src = eth_src;
+    eth->eth_type = htons(ETH_TYPE_IP);
+
+    dp_packet_set_l3(pkt, (char *) dp_packet_data(pkt) + ETH_HEADER_LEN);
+
+    struct ip_header *iph = dp_packet_l3(pkt);
+    iph->ip_ihl_ver = IP_IHL_VER(5, 4);
+    iph->ip_tot_len = htons(IP_HEADER_LEN + TCP_HEADER_LEN + ftp_len);
+    iph->ip_ttl = 64;
+    iph->ip_proto = IPPROTO_TCP;
+    put_16aligned_be32(&iph->ip_src, ip_src);
+    put_16aligned_be32(&iph->ip_dst, ip_dst);
+    iph->ip_csum = csum(iph, IP_HEADER_LEN);
+
+    dp_packet_set_l4(pkt, (char *) iph + IP_HEADER_LEN);
+
+    struct tcp_header *tcph = dp_packet_l4(pkt);
+    tcph->tcp_src = htons(sport);
+    tcph->tcp_dst = htons(dport);
+    put_16aligned_be32(&tcph->tcp_seq, htonl(1000));
+    put_16aligned_be32(&tcph->tcp_ack, htonl(1000));
+    tcph->tcp_ctl = TCP_CTL(TCP_PSH | TCP_ACK, TCP_HEADER_LEN / 4);
+    tcph->tcp_winsz = htons(65535);
+
+    /* Copy FTP payload. */
+    memcpy((char *) tcph + TCP_HEADER_LEN, ftp_cmd, ftp_len);
+    tcph->tcp_csum = csum_finish(csum_continue(packet_csum_pseudoheader(iph),
+                                 tcph, TCP_HEADER_LEN + ftp_len));
+
+    /* The rewrite needs five extra bytes, and the guard requires
+     * MAX_FTP_V4_NAT_DELTA of tail room before attempting it. */
+    ovs_assert(dp_packet_size(pkt) == pkt_len);
+    ovs_assert(dp_packet_headroom(pkt) == L3_ALIGN_PAD + headroom);
+    ovs_assert(dp_packet_tailroom(pkt) == tailroom);
+
+    /* Process through conntrack - guard should reject modification. */
+    struct dp_packet_batch batch;
+    dp_packet_batch_init_packet(&batch, pkt);
+    conntrack_execute(ct, &batch, htons(ETH_TYPE_IP), false, true, 0,
+                      NULL, NULL, "ftp", &nat_info, now, 0);
+
+    /* Verify payload was NOT modified (guard prevented it). */
+    tcph = dp_packet_l4(pkt);
+    const char *payload_start = (const char *) tcph + TCP_HEADER_LEN;
+    ovs_assert(!strncmp(payload_start, ftp_cmd, ftp_len));
+
+    dp_packet_delete_batch(&batch, true);
+    conntrack_destroy(ct);
+}
+
 
 static const struct ovs_cmdl_command commands[] = {
     /* Connection tracker tests. */
@@ -601,6 +724,11 @@ static const struct ovs_cmdl_command commands[] = {
      * is rewritten to the SNAT target rather than causing a crash. */
     {"ftp-alg-large-payload", "", 0, 0,
         test_ftp_alg_large_payload, OVS_RO},
+    /* Verifies that the FTP ALG rejects a rewrite when the packet does not
+     * have enough tail room.  'headroom' and 'tailroom' are the free buffer
+     * space, in bytes, around the packet as it is given to conntrack. */
+    {"ftp-alg-guard", "headroom tailroom", 2, 2,
+        test_ftp_alg_guard, OVS_RO},
 
     {NULL, NULL, 0, 0, NULL, OVS_RO},
 };
