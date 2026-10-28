@@ -18,8 +18,42 @@
 #undef NDEBUG
 #include "random.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include "hash.h"
 #include "ovstest.h"
+#include "timeval.h"
+#include "util.h"
+
+static double
+elapsed_sec(const struct timeval *start, const struct timeval *end)
+{
+    return (end->tv_sec - start->tv_sec)
+           + (end->tv_usec - start->tv_usec) / 1000000.0;
+}
+
+static int
+compare_u64(const void *a_, const void *b_)
+{
+    uint64_t a = *(const uint64_t *) a_, b = *(const uint64_t *) b_;
+
+    return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/* A 64-byte keystream block paired with its digest. */
+struct block_hash {
+    uint64_t hash;
+    uint8_t block[CHACHA_BLOCK];
+};
+
+/* Sorts 'block_hash' entries by their digest. */
+static int
+compare_block_hash(const void *a_, const void *b_)
+{
+    const struct block_hash *a = a_, *b = b_;
+
+    return compare_u64(&a->hash, &b->hash);
+}
 
 static void
 test_random_main(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
@@ -74,6 +108,109 @@ test_random_main(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
         printf("\n");
     }
     printf("(expected values are %d)\n", N_ROUNDS / 16);
+
+    /* Now for ChaCha20 test. */
+    /* RFC 8439 section 2.3.2: the ChaCha20 block function.  Key = 00..1f,
+     * block counter = 1, nonce = 00:00:00:09 00:00:00:4a 00:00:00:00.  Note
+     * this is the RFC's 32-bit-counter/96-bit-nonce layout; chacha20_block()
+     * is agnostic to how words 12..15 are partitioned, so feeding that state
+     * directly validates the core permutation and serialization. */
+    {
+        const uint32_t input[16] = {
+            0x61707865, 0x3320646e, 0x79622d32, 0x6b206574,
+            0x03020100, 0x07060504, 0x0b0a0908, 0x0f0e0d0c,
+            0x13121110, 0x17161514, 0x1b1a1918, 0x1f1e1d1c,
+            0x00000001, 0x09000000, 0x4a000000, 0x00000000,
+        };
+        static const uint8_t expected[64] = {
+            0x10, 0xf1, 0xe7, 0xe4, 0xd1, 0x3b, 0x59, 0x15,
+            0x50, 0x0f, 0xdd, 0x1f, 0xa3, 0x20, 0x71, 0xc4,
+            0xc7, 0xd1, 0xf4, 0xc7, 0x33, 0xc0, 0x68, 0x03,
+            0x04, 0x22, 0xaa, 0x9a, 0xc3, 0xd4, 0x6c, 0x4e,
+            0xd2, 0x82, 0x64, 0x46, 0x07, 0x9f, 0xaa, 0x09,
+            0x14, 0xc2, 0xd7, 0x05, 0xd9, 0x8b, 0x02, 0xa2,
+            0xb5, 0x12, 0x9c, 0xd1, 0xde, 0x16, 0x4e, 0xb9,
+            0xcb, 0xd0, 0x83, 0xe8, 0xa2, 0x50, 0x3c, 0x4e,
+        };
+        uint8_t out[64];
+
+        chacha20_block(input, out);
+
+        ovs_assert(!memcmp(out, expected, sizeof out));
+        printf("ok: RFC 8439 2.3.2 block function\n");
+    }
+
+    /* Refill / rekey selftest.  Generate enough output to cross several
+     * buffer refills and the periodic reseed boundary (1.6 MiB), then
+     * check that every 64-byte block of the stream is unique.  A stuck
+     * block counter would repeat adjacent blocks, and a refill or
+     * reseed that failed to inject fresh key material would repeat
+     * whole stretches of keystream; either failure shows up as a
+     * duplicate block hash. */
+    {
+        enum { CHUNK = 1024, N_BYTES = 2 * 1024 * 1024 };
+        uint8_t buf[CHUNK];
+        struct block_hash *hashes;
+        size_t n_hash, off;
+
+        ovs_assert(N_BYTES % CHUNK == 0 && CHUNK % CHACHA_BLOCK == 0);
+        hashes = xmalloc(N_BYTES / CHACHA_BLOCK * sizeof *hashes);
+        n_hash = 0;
+        for (off = 0; off < N_BYTES; off += CHUNK) {
+            size_t blk;
+
+            cs_random_bytes(buf, sizeof buf);
+            for (blk = 0; blk < CHUNK; blk += CHACHA_BLOCK) {
+                hashes[n_hash].hash = hash_bytes(buf + blk, CHACHA_BLOCK, 0);
+                memcpy(hashes[n_hash].block, buf + blk, CHACHA_BLOCK);
+                n_hash++;
+            }
+        }
+        ovs_assert(n_hash == N_BYTES / CHACHA_BLOCK);
+
+        /* hash_bytes() is only 32 bits, so over this many blocks an
+         * incidental digest collision is expected every few runs.
+         * Confirm any duplicate digest against the blocks themselves:
+         * equal blocks are a keystream repeat, different blocks are an
+         * innocuous hash collision. */
+        qsort(hashes, n_hash, sizeof *hashes, compare_block_hash);
+        for (n_hash = 1; n_hash < N_BYTES / CHACHA_BLOCK; n_hash++) {
+            if (hashes[n_hash].hash == hashes[n_hash - 1].hash) {
+                ovs_assert(memcmp(hashes[n_hash].block,
+                                  hashes[n_hash - 1].block,
+                                  CHACHA_BLOCK));
+            }
+        }
+        free(hashes);
+        printf("ok: cs_random_bytes() refill and rekey\n");
+    }
+}
+
+static void
+test_bench_random(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
+{
+    enum { N_BENCH = 10000000 };
+    struct timeval start, end;
+    uint32_t x = 0;
+    int i;
+
+    /* Benchmark the CSPRNG and PRNG performance. */
+    xgettimeofday(&start);
+    for (i = 0; i < N_BENCH; i++) {
+        x += random_uint32();
+    }
+    xgettimeofday(&end);
+    printf("random_uint32: %f seconds\n", elapsed_sec(&start, &end));
+
+    xgettimeofday(&start);
+    for (i = 0; i < N_BENCH; i++) {
+        x += cs_random_uint32();
+    }
+    xgettimeofday(&end);
+    printf("cs_random_uint32: %f seconds\n", elapsed_sec(&start, &end));
+    printf("accumulator: %u\n", x); /* NOTE: Keep this to prevent compiler
+                                     * from optimizing out the calls above. */
 }
 
 OVSTEST_REGISTER("test-random", test_random_main);
+OVSTEST_REGISTER("test-bench-random", test_bench_random);
