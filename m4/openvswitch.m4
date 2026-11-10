@@ -170,6 +170,13 @@ OpenFlow connections over SSL/TLS will not be supported.
    AM_CONDITIONAL([HAVE_OPENSSL], [test "$HAVE_OPENSSL" = yes])
    if test "$HAVE_OPENSSL" = yes; then
       AC_DEFINE([HAVE_OPENSSL], [1], [Define to 1 if OpenSSL is installed.])
+      dnl OpenSSL may be built without ChaCha20 support, e.g. when it only
+      dnl offers approved algorithms in FIPS mode, so detect it separately.
+      AC_CHECK_DECLS([EVP_chacha20],
+                     [AC_DEFINE([HAVE_CHACHA20_EVP], [1],
+                                [Define to 1 if OpenSSL provides ChaCha20.])],
+                     [],
+                     [[#include <openssl/evp.h>]])
    fi
 ])
 

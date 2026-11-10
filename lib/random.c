@@ -18,15 +18,23 @@
 #include "random.h"
 
 #include <errno.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <sys/time.h>
+
+#ifdef HAVE_CHACHA20_EVP
+#include <openssl/evp.h>
+#endif
 
 #include "byte-order.h"
 #include "entropy.h"
 #include "hash.h"
+#include "openvswitch/vlog.h"
 #include "ovs-thread.h"
 #include "timeval.h"
 #include "util.h"
+
+VLOG_DEFINE_THIS_MODULE(random);
 
 /* This is the 32-bit PRNG recommended in G. Marsaglia, "Xorshift RNGs",
  * _Journal of Statistical Software_ 8:14 (July 2003).  According to the paper,
@@ -139,6 +147,14 @@ random_next(void)
  * the arc4random policy of periodic reseeding. */
 #define CSPRNG_RESEED   (1600 * 1024)
 
+#ifdef HAVE_CHACHA20_EVP
+#define CHACHA_IVLEN    16          /* ChaCha20 IV: counter and nonce. */
+/* The OpenSSL EVP backend consumes an IV in addition to a key. */
+#define CSPRNG_SECRETS  (CHACHA_KEYLEN + CHACHA_IVLEN)
+#else
+#define CSPRNG_SECRETS  CHACHA_KEYLEN
+#endif
+
 #define ROTL32(v, n)    (((v) << (n)) | ((v) >> (32 - (n))))
 
 #define QUARTERROUND(a, b, c, d)                \
@@ -148,6 +164,11 @@ random_next(void)
     c += d; b ^= c; b = ROTL32(b, 7)
 
 struct csprng {
+#ifdef HAVE_CHACHA20_EVP
+    EVP_CIPHER_CTX *ctx;            /* OpenSSL EVP state, once created. */
+    bool use_evp;                   /* Serve from OpenSSL rather than the
+                                     * built-in implementation. */
+#endif
     uint32_t state[16];             /* ChaCha20 state:
                                      * constant|key|counter|nonce. */
     uint8_t buf[CSPRNG_BUFSZ];      /* Buffered keystream. */
@@ -159,8 +180,10 @@ struct csprng {
 /* ChaCha20 constant: "expand 32-byte k".  Must be at least 16 bytes + NUL. */
 static const uint8_t chacha_sigma[] = "expand 32-byte k";
 
+#ifndef HAVE_CHACHA20_EVP
 /* Current random state. */
 DEFINE_STATIC_PER_THREAD_DATA(struct csprng, cs_state, { .initialized = 0 });
+#endif
 
 /* Produces one 64-byte ChaCha20 block from 'input' (16 words) into 'out'. */
 void
@@ -213,13 +236,128 @@ csprng_rekey(struct csprng *c, const uint8_t key[CHACHA_KEYLEN])
     }
 }
 
+#ifdef HAVE_CHACHA20_EVP
+/* This is the EVP based CSPRNG using the OpenSSL EVP framework to create a
+ * long stream of bytes, and pull those.  The OpenSSL EVP manages the
+ * underlying bytes, all this does is manage the policy.  It re-keys from the
+ * beginning of every refill, as the built-in implementation below does, so
+ * that both provide the same fast key erasure. */
+
+static void
+cs_state_destroy(void *ctx)
+{
+    struct csprng *csp = ctx;
+
+    if (csp->ctx) {
+        EVP_CIPHER_CTX_free(csp->ctx);
+        csp->ctx = NULL;
+    }
+
+    free(csp);
+}
+
+static struct csprng *
+cs_state_get(void)
+{
+    static struct ovsthread_once once = OVSTHREAD_ONCE_INITIALIZER;
+    static ovsthread_key_t cskey;
+    struct csprng *csp;
+
+    if (ovsthread_once_start(&once)) {
+        ovsthread_key_create(&cskey, cs_state_destroy);
+        ovsthread_once_done(&once);
+    }
+
+    csp = ovsthread_getspecific(cskey);
+    if (!csp) {
+        csp = xzalloc(sizeof *csp);
+        csp->use_evp = true;
+        ovsthread_setspecific(cskey, csp);
+    }
+    return csp;
+}
+
+/* (Re)keys the OpenSSL EVP state from 'key' (32 bytes) and 'iv' (16 bytes). */
+static bool
+csprng_evp_rekey(struct csprng *c, const uint8_t key[CHACHA_KEYLEN],
+                 const uint8_t iv[CHACHA_IVLEN])
+{
+    return EVP_EncryptInit_ex(c->ctx, EVP_chacha20(), NULL, key, iv) == 1;
+}
+
+/* Seeds the OpenSSL EVP state from fresh entropy, returning false if OpenSSL
+ * cannot provide ChaCha20. */
+static bool
+csprng_evp_seed(struct csprng *c, const uint8_t key[CHACHA_KEYLEN])
+{
+    uint8_t iv[CHACHA_IVLEN];
+    bool ok;
+
+    if (!c->ctx) {
+        c->ctx = EVP_CIPHER_CTX_new();
+        if (!c->ctx) {
+            VLOG_WARN_ONCE("cs_random: cannot create cipher context.");
+            return false;
+        }
+    }
+
+    get_entropy_or_die(iv, sizeof iv);
+    ok = csprng_evp_rekey(c, key, iv);
+    ovs_memzero(iv, sizeof iv);
+
+    if (!ok) {
+        /* OpenSSL may not provide ChaCha20 at all, for example when it only
+         * offers approved algorithms in FIPS mode.  Fall back to the built-in
+         * implementation rather than failing to provide randomness. */
+        VLOG_WARN_ONCE("cs_random: OpenSSL ChaCha20 unavailable, using the "
+                       "built-in implementation.");
+    }
+    return ok;
+}
+
+/* Fills 'c' with fresh keystream from OpenSSL, reserving the first bytes to
+ * re-key the generator (fast key erasure / forward secrecy).  Returns false
+ * if OpenSSL fails to produce the keystream or to re-key, in which case the
+ * caller should fall back to the built-in implementation. */
+static bool
+csprng_evp_refill(struct csprng *c)
+{
+    static const uint8_t zero[CSPRNG_BUFSZ];
+    int outl;
+
+    if (EVP_EncryptUpdate(c->ctx, c->buf, &outl, zero, sizeof c->buf) != 1 ||
+        outl != sizeof c->buf ||
+        !csprng_evp_rekey(c, c->buf, c->buf + CHACHA_KEYLEN)) {
+        VLOG_WARN_ONCE("cs_random: OpenSSL EVP failure, using the built-in "
+                       "implementation.");
+        ovs_memzero(c->buf, sizeof c->buf);
+        return false;
+    }
+
+    ovs_memzero(c->buf, CSPRNG_SECRETS);
+    c->pos = CSPRNG_SECRETS;
+    return true;
+}
+#endif /* HAVE_CHACHA20_EVP */
+
 static void
 csprng_seed(struct csprng *c)
 {
     uint8_t key[CHACHA_KEYLEN];
 
     get_entropy_or_die(key, sizeof key);
+
+#ifdef HAVE_CHACHA20_EVP
+    if (c->use_evp && !csprng_evp_seed(c, key)) {
+        c->use_evp = false;
+    }
+    if (!c->use_evp) {
+        csprng_rekey(c, key);
+    }
+#else
     csprng_rekey(c, key);
+#endif
+
     ovs_memzero(key, sizeof key);
 
     c->pos = sizeof c->buf;
@@ -259,16 +397,32 @@ cs_random_bytes(void *b, size_t l)
      * anyone using this interface forks via xfork(); if child processes
      * ever need fresh state, xfork() should be taught to clear it.
      *
-     * The first 32 bytes of every refill are consumed as the next key, so
-     * they are not available as output. */
-    ovs_assert(l > sizeof c->buf - CHACHA_KEYLEN);
+     * The first bytes of every refill are consumed as the next key, and as
+     * the next IV when serving from OpenSSL, so they are not available as
+     * output. */
+    ovs_assert (l > sizeof c->buf - CSPRNG_SECRETS);
 
     if (!c->initialized || c->served >= CSPRNG_RESEED) {
         csprng_seed(c);
     }
 
     if (c->pos + l > sizeof c->buf) {
+
+#ifdef HAVE_CHACHA20_EVP
+        if (c->use_evp && !csprng_evp_refill(c)) {
+            /* The built-in state has never been keyed when serving from
+             * OpenSSL, so seed it from fresh entropy before falling back;
+             * refilling the unkeyed state would produce deterministic
+             * output. */
+            c->use_evp = false;
+            csprng_seed(c);
+        }
+        if (!c->use_evp) {
+            csprng_refill(c);
+        }
+#else
         csprng_refill(c);
+#endif
     }
 
     memcpy(b, c->buf + c->pos, l);
