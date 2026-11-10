@@ -408,6 +408,20 @@ ovs_strzcpy(char *dst, const char *src, size_t size)
     }
 }
 
+/* Zeroes 'size' bytes of memory at 'ptr'.  Unlike memset(), the compiler is
+ * not allowed to optimize this away, so it may be used to scrub sensitive
+ * data, such as keying material, from memory. */
+void
+ovs_memzero(void *ptr, size_t size)
+{
+    volatile uint8_t *p = ptr;
+    size_t i;
+
+    for (i = 0; i < size; i++) {
+        p[i] = 0;
+    }
+}
+
 /*
  * Returns true if 'str' ends with given 'suffix'.
  */
