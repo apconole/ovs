@@ -53,7 +53,8 @@ void chacha20_block(const uint32_t input[CHACHA_K_INPUT],
                     uint8_t out[CHACHA_BLOCK]);
 
 /* Fills 'b' with 'l' cryptographically secure random bytes.  'l' must not be
- * larger than 4064; callers needing more bytes should make multiple calls. */
+ * larger than 4048 (4064 in builds without OpenSSL EVP ChaCha20 support);
+ * callers needing more bytes should make multiple calls. */
 void cs_random_bytes(void *, size_t);
 uint32_t cs_random_uint32(void);
 
