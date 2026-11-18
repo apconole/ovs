@@ -78,6 +78,7 @@ ct_offload_register(const struct ct_offload_class *class)
 
     ovs_assert(class);
     ovs_assert(class->name);
+    ovs_assert(class->batch_submit);
     ovs_assert(class->flow_might_offload);
 
     ovs_rwlock_wrlock(&ct_offload_rwlock);
@@ -207,6 +208,120 @@ ct_offload_module_init(void)
 {
     /* No built-in providers yet; third parties call ct_offload_register()
      * directly from their own module-init routines. */
+}
+
+/* ct_offload_op_batch_add() - append one operation to 'batch'.
+ *
+ * The context is copied by value; no references are taken on ctx.conn or
+ * ctx.netdev_in, so they must remain valid until the batch is submitted
+ * (i.e. until ct_offload_op_batch_submit() returns: the framework
+ * accesses the ops after the provider callbacks have run). */
+void
+ct_offload_op_batch_add(struct ct_offload_op_batch *batch,
+                        enum ct_offload_op_type type,
+                        const struct ct_offload_ctx *ctx)
+{
+    if (batch->n_ops == batch->allocated) {
+        size_t new_allocated = 2 * batch->allocated;
+
+        if (batch->ops == batch->inline_ops) {
+            batch->ops = xmalloc(new_allocated * sizeof *batch->ops);
+            memcpy(batch->ops, batch->inline_ops,
+                   sizeof batch->inline_ops);
+        } else {
+            batch->ops = xrealloc(batch->ops,
+                                  new_allocated * sizeof *batch->ops);
+        }
+        batch->allocated = new_allocated;
+    }
+
+    struct ct_offload_op *op = &batch->ops[batch->n_ops++];
+
+    op->type = type;
+    op->ctx = *ctx;
+    op->error = 0;
+    op->last_used = 0;
+}
+
+/* ct_offload_op_batch_submit() - submit 'batch' to every open provider.
+ *
+ * Result fields are pre-filled (EOPNOTSUPP = "no provider claimed this
+ * op"); providers must leave them untouched when not handling a
+ * connection (see ct-offload.h). */
+void
+ct_offload_op_batch_submit(struct ct_offload_op_batch *batch)
+{
+    struct ct_offload_class_node *node;
+
+    /* EOPNOTSUPP = "no provider claimed this op". */
+    for (size_t i = 0; i < batch->n_ops; i++) {
+        batch->ops[i].error = EOPNOTSUPP;
+        batch->ops[i].last_used = 0;
+    }
+
+    ovs_rwlock_rdlock(&ct_offload_rwlock);
+    LIST_FOR_EACH (node, list_node, &ct_offload_classes) {
+        if (node->refcnt == 0) {
+            continue;
+        }
+        node->class->batch_submit(batch);
+    }
+    ovs_rwlock_unlock(&ct_offload_rwlock);
+}
+
+void
+ct_offload_conn_add(const struct ct_offload_ctx *ctx)
+{
+    struct ct_offload_op op = { .type = CT_OFFLOAD_OP_ADD, .ctx = *ctx };
+    struct ct_offload_op_batch batch = {
+        .ops = &op, .n_ops = 1, .allocated = 1
+    };
+
+    ct_offload_op_batch_submit(&batch);
+
+    if (op.error && op.error != EOPNOTSUPP) {
+        VLOG_DBG("ct offload failed to add connection: %s",
+                 ovs_strerror(op.error));
+    }
+}
+
+void
+ct_offload_conn_del(const struct ct_offload_ctx *ctx)
+{
+    struct ct_offload_op op = { .type = CT_OFFLOAD_OP_DEL, .ctx = *ctx };
+    struct ct_offload_op_batch batch = {
+        .ops = &op, .n_ops = 1, .allocated = 1
+    };
+
+    ct_offload_op_batch_submit(&batch);
+}
+
+long long
+ct_offload_conn_update(const struct ct_offload_ctx *ctx)
+{
+    struct ct_offload_op op = { .type = CT_OFFLOAD_OP_UPD, .ctx = *ctx };
+    struct ct_offload_op_batch batch = {
+        .ops = &op, .n_ops = 1, .allocated = 1
+    };
+
+    ct_offload_op_batch_submit(&batch);
+
+    return op.last_used;
+}
+
+/* Notifies providers that software observed the connection transition
+ * to established (reply-direction packet).  A signal only. */
+void
+ct_offload_conn_notify_established(const struct ct_offload_ctx *ctx)
+{
+    struct ct_offload_op op = {
+        .type = CT_OFFLOAD_OP_ESTABLISHED, .ctx = *ctx
+    };
+    struct ct_offload_op_batch batch = {
+        .ops = &op, .n_ops = 1, .allocated = 1
+    };
+
+    ct_offload_op_batch_submit(&batch);
 }
 
 /* ct_offload_flow_offloadable() - may a flow containing the ct()
